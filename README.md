@@ -4,9 +4,20 @@ Sistema de detecção de fraude em tempo real para transações bancárias brasi
 
 ## Versão
 
-**Versão Atual**: 1.1.0  
+**Versão Atual**: 1.2.0  
 **Data de Lançamento**: 25/04/2026  
 **Última Atualização**: 25/04/2026
+
+### Mudanças na Versão 1.2.0
+
+- Implementado Interpretador de Regras em Linguagem Natural (DSL)
+- Suporte a português brasileiro (PT-BR) para regras operacionais
+- Condições suportadas: CPF, valor, horário, canal, banco
+- Ações: marcar como fraude ou legítimo (whitelist)
+- Integração com API FastAPI (/predict com priorização de regras)
+- Endpoints CRUD para gerenciamento de regras
+- 110 testes abrangentes para rule engine
+- Documentação completa do interpretador de regras
 
 ### Mudanças na Versão 1.1.0
 
@@ -32,21 +43,28 @@ Sistema de detecção de fraude em tempo real para transações bancárias brasi
 │  - config.py    │
 └────────┬────────┘
          │
-         ▼
-┌─────────────────┐
-│Feature Engineer │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ ML Model (XGBoost)│
-│  - SHAP Explainer│
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Repositories   │
-└─────────────────┘
+         ├──────────────┐
+         │              │
+         ▼              ▼
+┌─────────────────┐  ┌─────────────────┐
+│ Rule Engine     │  │Feature Engineer │
+│ - parser.py     │  │                 │
+│ - rule.py       │  └────────┬────────┘
+│ - evaluator.py  │           │
+└────────┬────────┘           │
+         │                    │
+         │                    ▼
+         │          ┌─────────────────┐
+         │          │ ML Model (XGBoost)│
+         │          │  - SHAP Explainer│
+         │          └────────┬────────┘
+         │                    │
+         └────────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │  Repositories   │
+                    └─────────────────┘
 ```
 
 ## Stack Tecnológica
@@ -60,6 +78,7 @@ Sistema de detecção de fraude em tempo real para transações bancárias brasi
 - **Configuration**: Pydantic Settings
 - **Explicabilidade**: SHAP 0.44+
 - **Persistência**: Joblib 1.3+
+- **Rule Engine**: DSL em Português (Regex-based)
 
 ## Instalação
 
@@ -111,13 +130,15 @@ Verifica status da API
 {
   "status": "healthy",
   "model_loaded": true,
-  "version": "1.1.0"
+  "version": "1.2.0"
 }
 ```
 
 ### POST /predict
 
 Predição de fraude (transação única) com explicação SHAP
+
+**Priorização**: Regras são avaliadas antes do modelo ML. Se uma regra der match, o resultado é retornado imediatamente sem executar o modelo.
 
 **Request**:
 ```json
@@ -150,7 +171,24 @@ Predição de fraude (transação única) com explicação SHAP
 }
 ```
 
-**Response**:
+**Response (Rule-based)**:
+```json
+{
+  "transaction_id": "test-id-123",
+  "fraud_probability": 1.0,
+  "is_fraud": true,
+  "confidence": "high",
+  "processing_time_ms": 5.2,
+  "timestamp": "2026-04-25T19:01:29.539100",
+  "explanation": {
+    "type": "rule_based",
+    "matched_rules": ["rule_1"],
+    "reason": "Transaction matched one or more fraud rules"
+  }
+}
+```
+
+**Response (ML-based)**:
 ```json
 {
   "transaction_id": "test-id-123",
@@ -163,7 +201,10 @@ Predição de fraude (transação única) com explicação SHAP
 }
 ```
 
-**Nota**: O campo `explanation` é preenchido apenas quando `is_fraud = true` e contém SHAP values.
+**Nota**: 
+- O campo `explanation` é preenchido quando `is_fraud = true`
+- Se regras derem match, `explanation.type = "rule_based"`
+- Se ML der match, `explanation` contém SHAP values
 
 ### POST /predict/batch
 
@@ -192,6 +233,154 @@ Informações do modelo
   "top_features": {...}
 }
 ```
+
+## Endpoints de Regras
+
+O sistema possui um interpretador de regras em linguagem natural (português brasileiro) para usuários operacionais.
+
+### POST /rules
+
+Criar nova regra
+
+**Request**:
+```json
+{
+  "rule_text": "Todo pix do CPF 12345678901 é fraude",
+  "name": "Regra CPF Suspeito",
+  "description": "Marca como fraude transações do CPF específico"
+}
+```
+
+**Response**:
+```json
+{
+  "rule_id": "rule_1",
+  "name": "Regra CPF Suspeito",
+  "description": "Texto original",
+  "original_text": "Todo pix do CPF 12345678901 é fraude",
+  "action": "mark_as_fraud",
+  "conditions_count": 1,
+  "enabled": true,
+  "priority": 0
+}
+```
+
+### GET /rules
+
+Listar todas as regras
+
+**Response**:
+```json
+{
+  "total_rules": 5,
+  "rules": [...]
+}
+```
+
+### GET /rules/{rule_id}
+
+Obter regra específica
+
+**Response**:
+```json
+{
+  "rule_id": "rule_1",
+  "name": "Regra CPF Suspeito",
+  "description": "Texto original",
+  "original_text": "Todo pix do CPF 12345678901 é fraude",
+  "action": "mark_as_fraud",
+  "conditions": [...],
+  "enabled": true,
+  "priority": 0
+}
+```
+
+### DELETE /rules/{rule_id}
+
+Deletar regra
+
+**Response**:
+```json
+{
+  "message": "Rule rule_1 deleted successfully"
+}
+```
+
+### POST /rules/{rule_id}/enable
+
+Habilitar regra
+
+**Response**:
+```json
+{
+  "rule_id": "rule_1",
+  "enabled": true
+}
+```
+
+### POST /rules/{rule_id}/disable
+
+Desabilitar regra
+
+**Response**:
+```json
+{
+  "rule_id": "rule_1",
+  "enabled": false
+}
+```
+
+### POST /rules/evaluate
+
+Avaliar transação contra regras
+
+**Request**:
+```json
+{
+  "payload": {
+    "id": "test-id-123",
+    "timestamp": "2026-04-16T09:55:11",
+    "canal": "app",
+    "produto": "pix",
+    "sender": {
+      "cpfSender": "12345678901"
+    },
+    "valor": 100.0
+  }
+}
+```
+
+**Response**:
+```json
+{
+  "transaction_id": "test-id-123",
+  "is_fraud_by_rules": true,
+  "is_legitimate_by_rules": false,
+  "matched_rules": ["rule_1"]
+}
+```
+
+## Sintaxe de Regras
+
+### Condições Suportadas
+
+- **CPF**: `Todo pix do CPF 12345678901 é fraude`
+- **Valor**: `Todos os pix com valor superior a 1000 reais é fraude`
+- **Horário**: `Todos os pix depois das 22:00 é fraude`
+- **Canal**: `Todos os pix do app é fraude`
+- **Banco**: `Bloquear todas as transacoes do banco 001`
+
+### Ações Suportadas
+
+- **Fraude**: `é fraude`, `é suspeita`, `bloquear`
+- **Legítimo (Whitelist)**: `não é fraude`, `nao é fraude`
+
+### Combinações
+
+- `Todo pix do CPF 12345678901 com valor superior a 1000 reais depois das 22:00 é fraude`
+- `Todos os pix do app do CPF 98765432100 não é fraude`
+
+Para mais detalhes, veja [Documentação do Interpretador de Regras](docs/INTERPRETADOR_REGRAS.md).
 
 ## Métricas Atuais
 
@@ -319,9 +508,11 @@ pytest --cov=src --cov-report=html
 pytest tests/test_model.py -v
 pytest tests/test_api.py -v
 pytest tests/test_performance.py -v
+pytest tests/test_rule_engine.py -v
+pytest tests/test_rule_engine_comprehensive.py -v
 ```
 
-**Resultado**: 26 passed, 5 skipped
+**Resultado**: 148 passed (38 rule engine + 110 comprehensive)
 
 ## Performance
 
@@ -342,6 +533,11 @@ anti-fraud-v3-wf/
 │   ├── feature_engineering.py    # Feature engineering
 │   ├── model.py                  # Modelo XGBoost + SHAP
 │   ├── repositories.py           # Repository Pattern
+│   ├── rule_engine/              # Interpretador de Regras
+│   │   ├── __init__.py
+│   │   ├── parser.py             # Parser de linguagem natural
+│   │   ├── rule.py               # Estruturas de dados
+│   │   └── evaluator.py          # Avaliador de regras
 │   └── main.py                   # API FastAPI
 ├── tests/                        # Suíte de testes
 │   ├── __init__.py
@@ -350,6 +546,8 @@ anti-fraud-v3-wf/
 │   ├── test_model.py
 │   ├── test_api.py
 │   ├── test_performance.py
+│   ├── test_rule_engine.py       # 38 testes do rule engine
+│   ├── test_rule_engine_comprehensive.py  # 110 testes abrangentes
 │   └── test_bdd_features.feature
 ├── models/                       # Modelos treinados
 │   ├── fraud_model.pkl
@@ -369,13 +567,15 @@ anti-fraud-v3-wf/
 ├── AGENTS.md
 └── docs/                         # Documentação
     ├── DOCUMENTACAO_COMPLETA.md
-    └── RELATORIO_TECNICO.md
+    ├── RELATORIO_TECNICO.md
+    └── INTERPRETADOR_REGRAS.md   # Documentação do interpretador
 ```
 
 ## Documentação
 
 - [Documentação Completa](docs/DOCUMENTACAO_COMPLETA.md) - Detalhamento completo do sistema
 - [Relatório Técnico](docs/RELATORIO_TECNICO.md) - Aspectos técnicos e arquiteturais
+- [Interpretador de Regras](docs/INTERPRETADOR_REGRAS.md) - Documentação completa do interpretador de regras em linguagem natural
 - [Análise de Dataset e Proposta de Modelo](analise_dataset_proposta_modelo.md)
 - [Validação Final PM](validacao_final_pm.md)
 
