@@ -9,13 +9,8 @@ import pandas as pd
 import shap
 import xgboost as xgb
 from imblearn.over_sampling import SMOTE
-from sklearn.metrics import (
-    classification_report,
-    confusion_matrix,
-    f1_score,
-    precision_recall_curve,
-    roc_auc_score,
-)
+from sklearn.metrics import (classification_report, confusion_matrix, f1_score,
+                             precision_recall_curve, roc_auc_score)
 from sklearn.model_selection import train_test_split
 
 from src.repositories import JoblibModelRepository, ModelRepository
