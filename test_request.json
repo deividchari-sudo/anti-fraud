@@ -1,0 +1,27 @@
+{
+  "payload": {
+    "id": "test-id-123",
+    "timestamp": "2026-04-16T09:55:11",
+    "canal": "web",
+    "produto": "pix",
+    "jornada": "pix_troco",
+    "direcao": "saida",
+    "sender": {
+      "banco": 152,
+      "agencia": "0001",
+      "nuConta": 61075434,
+      "cpfSender": "75096441908"
+    },
+    "receiver": {
+      "banco": 888,
+      "agencia": "3061",
+      "nuConta": 628328,
+      "cpfReceiver": "69473704016"
+    },
+    "valor": 1000.0,
+    "extra_info": {
+      "codigo_barra": null,
+      "motivo_acesso": null
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "payload": {
+    "id": "test-fraud-123",
+    "timestamp": "2026-04-16T03:00:00",
+    "canal": "api",
+    "produto": "pix",
+    "jornada": "pix_troco",
+    "direcao": "saida",
+    "sender": {
+      "banco": 152,
+      "agencia": "0001",
+      "nuConta": 61075434,
+      "cpfSender": "75096441908"
+    },
+    "receiver": {
+      "banco": 999,
+      "agencia": "9999",
+      "nuConta": 99999999,
+      "cpfReceiver": "99999999999"
+    },
+    "valor": 15000.0,
+    "extra_info": {
+      "codigo_barra": null,
+      "motivo_acesso": null
+    }
+  }
+}
