@@ -1,6 +1,6 @@
+from typing import Any, Dict, Optional
+
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
-from datetime import datetime
 
 
 class Sender(BaseModel):
