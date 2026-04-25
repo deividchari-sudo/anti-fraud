@@ -16,7 +16,8 @@ class RuleParser:
         'horario': r'(?:depois\s+das|após\s+as|antes\s+das|antes\s+das)\s*(\d{2}):(\d{2})',
         'canal': r'(?:pix|transação|tudo)\s*(?:do|da|no|na)\s*(app|web|api)',
         'produto': r'(pix|ted|boleto|autenticação|login)',
-        'is_fraud': r'(?:é|é\s+uma|é\s+um)\s*(?:fraude|suspeita)',
+        'banco': r'(?:do\s+)?(?:banco|Banco)\s*(?:do|da|do\s+sender|do\s+receiver|do\s+remetente)?\s*(\d+)',
+        'is_fraud': r'(?:é|é\s+uma|é\s+um|bloquear|bloqueia|bloqueia)\s*(?:fraude|suspeita)',
         'is_not_fraud': r'(?:não|nao)(?:\s+é)?\s*(?:fraude|suspeita)',
     }
     
@@ -65,6 +66,24 @@ class RuleParser:
                     field=ConditionType.CPF_SENDER,
                     operator=Operator.EQUALS,
                     value=cpf
+                ))
+        
+        # Banco condition
+        banco_match = re.search(self.PATTERNS['banco'], text)
+        if banco_match and banco_match.group(1):
+            banco = banco_match.group(1)
+            # Determine if it's sender or receiver
+            if 'receiver' in text or 'remetente' in text:
+                conditions.append(Condition(
+                    field=ConditionType.BANCO_RECEIVER,
+                    operator=Operator.EQUALS,
+                    value=int(banco)
+                ))
+            else:
+                conditions.append(Condition(
+                    field=ConditionType.BANCO_SENDER,
+                    operator=Operator.EQUALS,
+                    value=int(banco)
                 ))
         
         # Valor condition
