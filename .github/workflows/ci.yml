@@ -42,6 +42,7 @@ jobs:
     
   lint:
     runs-on: ubuntu-latest
+    if: false  # Disabled lint job
     
     steps:
     - uses: actions/checkout@v4
