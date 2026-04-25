@@ -3,7 +3,7 @@ Natural language parser for fraud detection rules.
 """
 
 import re
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from .rule import ActionType, Condition, ConditionType, Operator, Rule
 

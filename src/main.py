@@ -10,7 +10,7 @@ from config import settings
 from src.feature_engineering import FeatureEngineer
 from src.model import FraudDetectionModel
 from src.models import FraudPrediction, HealthResponse, TransactionRequest
-from src.repositories import JoblibModelRepository, ModelRepository
+from src.repositories import JoblibModelRepository
 from src.rule_engine import RuleEvaluator, RuleParser
 
 app = FastAPI(

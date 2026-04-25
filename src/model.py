@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -10,7 +10,7 @@ import shap
 import xgboost as xgb
 from imblearn.over_sampling import SMOTE
 from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_recall_curve, roc_auc_score
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import train_test_split
 
 from src.repositories import JoblibModelRepository, ModelRepository
 
@@ -170,7 +170,7 @@ class FraudDetectionModel:
         best_threshold = thresholds[best_idx] if best_idx < len(thresholds) else 0.5
         best_f1 = f1_scores[best_idx]
 
-        print(f"\n=== Threshold Optimization ===")
+        print("\n=== Threshold Optimization ===")
         print(f"Best threshold (F1-Score): {best_threshold:.4f}")
         print(f"Best F1-Score: {best_f1:.4f}")
 

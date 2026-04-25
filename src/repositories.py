@@ -2,9 +2,9 @@
 Repository Pattern for data access.
 """
 
+import json
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
