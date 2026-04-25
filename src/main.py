@@ -3,12 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import time
 import json
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 from src.models import TransactionRequest, FraudPrediction, HealthResponse
 from src.feature_engineering import FeatureEngineer
 from src.model import FraudDetectionModel
 from src.repositories import ModelRepository, JoblibModelRepository
+from src.rule_engine import RuleParser, RuleEvaluator, Rule
 from config import settings
 
 app = FastAPI(
@@ -28,6 +29,10 @@ app.add_middleware(
 
 # Global variables
 feature_engineer = FeatureEngineer()
+
+# Rule Engine - for natural language rules
+rule_parser = RuleParser()
+rule_evaluator = RuleEvaluator()
 
 # Dependency injection for model repository
 model_repository = JoblibModelRepository(
@@ -74,8 +79,44 @@ async def predict_fraud(request: TransactionRequest):
     start_time = time.time()
     
     try:
+        # First, evaluate against rules
+        transaction_dict = request.payload.model_dump()
+        rule_result = rule_evaluator.evaluate(transaction_dict)
+        
+        # If rules marked as fraud, return immediately
+        if rule_result['is_fraud_by_rules']:
+            return FraudPrediction(
+                transaction_id=request.payload.id,
+                fraud_probability=1.0,
+                is_fraud=True,
+                confidence="high",
+                processing_time_ms=float((time.time() - start_time) * 1000),
+                timestamp=datetime.now().isoformat(),
+                explanation={
+                    "type": "rule_based",
+                    "matched_rules": rule_result['matched_rules'],
+                    "reason": "Transaction matched one or more fraud rules"
+                }
+            )
+        
+        # If rules marked as legitimate, return immediately
+        if rule_result['is_legitimate_by_rules']:
+            return FraudPrediction(
+                transaction_id=request.payload.id,
+                fraud_probability=0.0,
+                is_fraud=False,
+                confidence="high",
+                processing_time_ms=float((time.time() - start_time) * 1000),
+                timestamp=datetime.now().isoformat(),
+                explanation={
+                    "type": "rule_based",
+                    "matched_rules": rule_result['matched_rules'],
+                    "reason": "Transaction matched whitelist rule"
+                }
+            )
+        
         # Extract features from payload
-        features = feature_engineer.extract_features(request.payload.model_dump())
+        features = feature_engineer.extract_features(transaction_dict)
         
         # Prepare DataFrame
         df = feature_engineer.prepare_dataframe(features)
@@ -182,6 +223,123 @@ async def model_info():
             status_code=500,
             detail=f"Error getting model info: {str(e)}"
         )
+
+
+# Rule Management Endpoints
+
+@app.post("/rules")
+async def create_rule(rule_text: str, name: Optional[str] = None, description: Optional[str] = None):
+    """Create a new rule from natural language text."""
+    try:
+        rule = rule_parser.parse(rule_text, name, description)
+        rule_evaluator.add_rule(rule)
+        
+        return {
+            "rule_id": rule.id,
+            "name": rule.name,
+            "description": rule.description,
+            "original_text": rule.original_text,
+            "action": rule.action.value,
+            "conditions_count": len(rule.conditions),
+            "enabled": rule.enabled,
+            "priority": rule.priority
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error parsing rule: {str(e)}")
+
+
+@app.get("/rules")
+async def list_rules():
+    """List all rules."""
+    rules = rule_evaluator.get_all_rules()
+    
+    return {
+        "total_rules": len(rules),
+        "rules": [
+            {
+                "rule_id": rule.id,
+                "name": rule.name,
+                "description": rule.description,
+                "original_text": rule.original_text,
+                "action": rule.action.value,
+                "conditions_count": len(rule.conditions),
+                "enabled": rule.enabled,
+                "priority": rule.priority
+            }
+            for rule in rules
+        ]
+    }
+
+
+@app.get("/rules/{rule_id}")
+async def get_rule(rule_id: str):
+    """Get a specific rule by ID."""
+    rule = rule_evaluator.get_rule(rule_id)
+    
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    
+    return {
+        "rule_id": rule.id,
+        "name": rule.name,
+        "description": rule.description,
+        "original_text": rule.original_text,
+        "action": rule.action.value,
+        "conditions": [
+            {
+                "field": condition.field.value,
+                "operator": condition.operator.value,
+                "value": condition.value
+            }
+            for condition in rule.conditions
+        ],
+        "enabled": rule.enabled,
+        "priority": rule.priority
+    }
+
+
+@app.delete("/rules/{rule_id}")
+async def delete_rule(rule_id: str):
+    """Delete a rule by ID."""
+    success = rule_evaluator.remove_rule(rule_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    
+    return {"message": "Rule deleted successfully"}
+
+
+@app.post("/rules/{rule_id}/enable")
+async def enable_rule(rule_id: str):
+    """Enable a rule by ID."""
+    rule = rule_evaluator.get_rule(rule_id)
+    
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    
+    rule.enabled = True
+    
+    return {"message": "Rule enabled successfully"}
+
+
+@app.post("/rules/{rule_id}/disable")
+async def disable_rule(rule_id: str):
+    """Disable a rule by ID."""
+    rule = rule_evaluator.get_rule(rule_id)
+    
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    
+    rule.enabled = False
+    
+    return {"message": "Rule disabled successfully"}
+
+
+@app.post("/rules/evaluate")
+async def evaluate_rules(transaction: dict):
+    """Evaluate a transaction against all rules."""
+    result = rule_evaluator.evaluate(transaction)
+    return result
 
 
 if __name__ == "__main__":
