@@ -225,13 +225,22 @@ async def model_info():
         )
 
 
+from pydantic import BaseModel
+
+
+class RuleCreateRequest(BaseModel):
+    rule_text: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
 # Rule Management Endpoints
 
 @app.post("/rules")
-async def create_rule(rule_text: str, name: Optional[str] = None, description: Optional[str] = None):
+async def create_rule(request: RuleCreateRequest):
     """Create a new rule from natural language text."""
     try:
-        rule = rule_parser.parse(rule_text, name, description)
+        rule = rule_parser.parse(request.rule_text, request.name, request.description)
         rule_evaluator.add_rule(rule)
         
         return {

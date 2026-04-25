@@ -11,7 +11,7 @@ class RuleParser:
     
     # Regex patterns for extracting components
     PATTERNS = {
-        'cpf': r'(?:cpf|CPF)\s*(?:do|da|do\s+sender|do\s+receiver|do\s+remetente)?\s*(\d{11})',
+        'cpf': r'(?:cpf|CPF)\s*(?:do|da|do\s+sender|do\s+receiver|do\s+remetente)?\s*(\d{10,11})',
         'valor': r'(?:valor|montante|quantia)\s*(?:superior\s+a|maior\s+que|igual\s+a|menor\s+que|abaixo\s+de)\s*(\d+(?:\.\d{2})?)\s*(?:reais|R\$)?',
         'horario': r'(?:depois\s+das|após\s+as|antes\s+das|antes\s+das)\s*(\d{2}):(\d{2})',
         'canal': r'(?:pix|transação|tudo)\s*(?:do|da|no|na)\s*(app|web|api)',
