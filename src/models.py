@@ -47,6 +47,7 @@ class FraudPrediction(BaseModel):
     processing_time_ms: float
     timestamp: str
     explanation: Optional[Dict[str, Any]] = None
+    behavioral_analysis: Optional[Dict[str, Any]] = None
 
 
 class HealthResponse(BaseModel):

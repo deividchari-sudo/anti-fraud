@@ -10,8 +10,9 @@ from config import settings
 from src.feature_engineering import FeatureEngineer
 from src.model import FraudDetectionModel
 from src.models import FraudPrediction, HealthResponse, TransactionRequest
-from src.repositories import JoblibModelRepository
+from src.repositories import JoblibModelRepository, JSONUserProfileRepository
 from src.rule_engine import RuleEvaluator, RuleParser
+from src.user_profile import UserProfileService
 
 app = FastAPI(
     title="Fraud Detection API",
@@ -44,6 +45,10 @@ model = FraudDetectionModel(
     model_path=settings.model_path, model_repository=model_repository
 )
 model_loaded = False
+
+# Behavioral Profiling Service
+user_profile_repository = JSONUserProfileRepository()
+user_profile_service = UserProfileService(user_profile_repository)
 
 # Try to load model on startup
 try:
@@ -130,6 +135,18 @@ async def predict_fraud(request: TransactionRequest):
 
         processing_time = (time.time() - start_time) * 1000
 
+        # Behavioral Profiling Analysis
+        behavioral_analysis = user_profile_service.analyze_transaction(transaction_dict)
+
+        # Update profile asynchronously (non-blocking)
+        try:
+            user_profile_service.update_profile(
+                transaction_dict.get("sender", {}).get("cpfSender", ""),
+                transaction_dict
+            )
+        except Exception as e:
+            print(f"Warning: Could not update user profile: {e}")
+
         response = FraudPrediction(
             transaction_id=request.payload.id,
             fraud_probability=float(fraud_probability),
@@ -138,6 +155,7 @@ async def predict_fraud(request: TransactionRequest):
             processing_time_ms=float(processing_time),
             timestamp=datetime.now().isoformat(),
             explanation=explanation,
+            behavioral_analysis=behavioral_analysis.dict()
         )
 
         return response
@@ -343,6 +361,67 @@ async def evaluate_rules(transaction: dict):
     """Evaluate a transaction against all rules."""
     result = rule_evaluator.evaluate(transaction)
     return result
+
+
+# Behavioral Profiling Endpoints
+
+
+@app.get("/profile/{cpf}")
+async def get_user_profile(cpf: str):
+    """Get user behavioral profile."""
+    try:
+        profile = user_profile_service.get_or_create_profile(cpf)
+        return profile.dict()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting profile: {str(e)}")
+
+
+class AnomalyFeedbackRequest(BaseModel):
+    transaction_id: str
+    cpf: str
+    is_true_anomaly: bool
+    analyst_id: str
+    notes: Optional[str] = None
+    anomaly_type: Optional[str] = None
+
+
+@app.post("/feedback/anomaly")
+async def submit_anomaly_feedback(request: AnomalyFeedbackRequest):
+    """Submit feedback about anomaly detection from analysts."""
+    try:
+        # Load existing feedback
+        import json
+        from pathlib import Path
+        
+        feedback_file = Path("data/anomaly_feedback.json")
+        if feedback_file.exists():
+            with open(feedback_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        else:
+            data = {"feedback": [], "metadata": {"total_feedback": 0, "last_updated": datetime.utcnow().isoformat()}}
+        
+        # Add new feedback
+        feedback_entry = {
+            "transaction_id": request.transaction_id,
+            "cpf": request.cpf,
+            "timestamp": datetime.utcnow().isoformat(),
+            "is_true_anomaly": request.is_true_anomaly,
+            "analyst_id": request.analyst_id,
+            "notes": request.notes,
+            "anomaly_type": request.anomaly_type
+        }
+        
+        data["feedback"].append(feedback_entry)
+        data["metadata"]["total_feedback"] = len(data["feedback"])
+        data["metadata"]["last_updated"] = datetime.utcnow().isoformat()
+        
+        # Save feedback
+        with open(feedback_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, default=str)
+        
+        return {"status": "recorded", "transaction_id": request.transaction_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error recording feedback: {str(e)}")
 
 
 if __name__ == "__main__":

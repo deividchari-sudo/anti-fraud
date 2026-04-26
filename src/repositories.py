@@ -5,6 +5,8 @@ Repository Pattern for data access.
 import json
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Optional
+from datetime import datetime
 
 import pandas as pd
 
@@ -94,3 +96,154 @@ class JoblibModelRepository(ModelRepository):
         Path(self.feature_names_path).parent.mkdir(exist_ok=True)
         with open(self.feature_names_path, "w") as f:
             json.dump(feature_names, f)
+
+
+class UserProfileRepository(ABC):
+    """Abstract repository for user profile data access."""
+
+    @abstractmethod
+    def save_profile(self, cpf: str, profile) -> None:
+        """Save user profile."""
+        pass
+
+    @abstractmethod
+    def load_profile(self, cpf: str) -> Optional:
+        """Load user profile."""
+        pass
+
+    @abstractmethod
+    def load_global_profile(self) -> Optional:
+        """Load global profile."""
+        pass
+
+    @abstractmethod
+    def delete_profile(self, cpf: str) -> bool:
+        """Delete user profile."""
+        pass
+
+
+class JSONUserProfileRepository(UserProfileRepository):
+    """JSON-based implementation of user profile repository."""
+
+    def __init__(self, profiles_file: str = "data/user_profiles.json",
+                 global_profile_file: str = "data/global_profile.json"):
+        self.profiles_file = Path(profiles_file)
+        self.global_profile_file = Path(global_profile_file)
+        self._ensure_files_exist()
+
+    def _ensure_files_exist(self):
+        """Ensure JSON files exist with proper structure."""
+        self.profiles_file.parent.mkdir(exist_ok=True)
+        
+        if not self.profiles_file.exists():
+            initial_data = {
+                "profiles": {},
+                "metadata": {
+                    "total_profiles": 0,
+                    "last_sync": datetime.utcnow().isoformat(),
+                    "version": "1.0.0"
+                }
+            }
+            with open(self.profiles_file, 'w', encoding='utf-8') as f:
+                json.dump(initial_data, f, indent=2)
+
+        if not self.global_profile_file.exists():
+            initial_data = {
+                "global_profile": None,
+                "metadata": {
+                    "last_updated": datetime.utcnow().isoformat(),
+                    "version": "1.0.0"
+                }
+            }
+            with open(self.global_profile_file, 'w', encoding='utf-8') as f:
+                json.dump(initial_data, f, indent=2)
+
+    def _load_json(self, file_path: Path) -> dict:
+        """Load JSON file."""
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    def _save_json(self, file_path: Path, data: dict):
+        """Save JSON file."""
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, default=str)
+
+    def save_profile(self, cpf: str, profile) -> None:
+        """Save user profile to JSON."""
+        data = self._load_json(self.profiles_file)
+        
+        # Convert profile to dict if it has dict() method
+        if hasattr(profile, 'dict'):
+            profile_dict = profile.dict()
+        else:
+            profile_dict = profile
+        
+        data["profiles"][cpf] = profile_dict
+        data["metadata"]["total_profiles"] = len(data["profiles"])
+        data["metadata"]["last_sync"] = datetime.utcnow().isoformat()
+        
+        self._save_json(self.profiles_file, data)
+
+    def load_profile(self, cpf: str) -> Optional:
+        """Load user profile from JSON."""
+        data = self._load_json(self.profiles_file)
+        profile_data = data["profiles"].get(cpf)
+        
+        if profile_data is None:
+            return None
+        
+        # Import here to avoid circular dependency
+        try:
+            from src.user_profile.models import UserProfile
+        except ImportError:
+            from user_profile.models import UserProfile
+        return UserProfile(**profile_data)
+
+    def load_global_profile(self) -> Optional:
+        """Load global profile from JSON."""
+        data = self._load_json(self.global_profile_file)
+        global_profile_data = data.get("global_profile")
+        
+        if global_profile_data is None:
+            return None
+        
+        # Import here to avoid circular dependency
+        try:
+            from src.user_profile.models import UserProfile, Statistics, ValueStatistics, HourStatistics, FrequencyStatistics, Destinations, Canais, Produtos
+        except ImportError:
+            from user_profile.models import UserProfile, Statistics, ValueStatistics, HourStatistics, FrequencyStatistics, Destinations, Canais, Produtos
+        
+        # Reconstruct UserProfile from global profile data
+        stats_data = global_profile_data.get("statistics", {})
+        canais_data = global_profile_data.get("canais", {})
+        produtos_data = global_profile_data.get("produtos", {})
+        
+        return UserProfile(
+            cpf="GLOBAL",
+            created_at=datetime.utcnow(),
+            last_updated=datetime.utcnow(),
+            transaction_count=0,
+            is_cold_start=False,
+            statistics=Statistics(**stats_data),
+            destinations=Destinations(),
+            canais=Canais(**canais_data),
+            produtos=Produtos(**produtos_data)
+        )
+
+    def delete_profile(self, cpf: str) -> bool:
+        """Delete user profile from JSON."""
+        data = self._load_json(self.profiles_file)
+        
+        if cpf in data["profiles"]:
+            del data["profiles"][cpf]
+            data["metadata"]["total_profiles"] = len(data["profiles"])
+            data["metadata"]["last_sync"] = datetime.utcnow().isoformat()
+            self._save_json(self.profiles_file, data)
+            return True
+        
+        return False
+
+    def list_all_profiles(self) -> dict:
+        """List all profiles."""
+        data = self._load_json(self.profiles_file)
+        return data["profiles"]
