@@ -11,7 +11,9 @@ Production usage: replaces static thresholds with self-adjusting ones that
 adapt to concept drift WITHOUT requiring full retraining.
 """
 
+import json
 from collections import defaultdict, deque
+from pathlib import Path
 from typing import Deque, Dict, List, Optional
 
 import numpy as np
@@ -30,25 +32,39 @@ class EpsilonGreedyThresholdSelector:
         epsilon: float = 0.1,
         reward_window: int = 200,
         random_state: int = 42,
+        epsilon_decay: float = 1.0,
+        epsilon_min: float = 0.01,
+        state_path: Optional[str] = None,
     ):
         """
         Args:
             candidate_thresholds: Discrete thresholds to try (default: 0.1..0.9)
-            epsilon: Exploration probability (0..1). 0.1 = 10% exploration
+            epsilon: Initial exploration probability (0..1). 0.1 = 10% exploration
             reward_window: Number of recent rewards to average per arm
             random_state: Random seed for reproducibility
+            epsilon_decay: Multiplicative decay per pull (1.0 = no decay)
+            epsilon_min: Floor for epsilon after decay
+            state_path: Optional path to persist/restore RL state across restarts
         """
         if not 0.0 <= epsilon <= 1.0:
             raise ValueError("epsilon must be in [0, 1]")
         if reward_window < 1:
             raise ValueError("reward_window must be >= 1")
+        if not 0.0 < epsilon_decay <= 1.0:
+            raise ValueError("epsilon_decay must be in (0, 1]")
+        if epsilon_min < 0:
+            raise ValueError("epsilon_min must be >= 0")
 
         self.candidate_thresholds = candidate_thresholds or [
             0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9
         ]
         self.epsilon = epsilon
+        self.epsilon_initial = epsilon
+        self.epsilon_decay = epsilon_decay
+        self.epsilon_min = epsilon_min
         self.reward_window = reward_window
         self.rng = np.random.default_rng(random_state)
+        self.state_path = state_path
 
         # Track rewards per arm (rolling window)
         self.rewards_by_arm: Dict[float, Deque[float]] = {
@@ -58,10 +74,14 @@ class EpsilonGreedyThresholdSelector:
         self.pull_counts: Dict[float, int] = defaultdict(int)
         self.total_pulls = 0
 
+        # Auto-load persisted state if available
+        if state_path and Path(state_path).exists():
+            self.load_state()
+
     # ------------------------------------------------------------- select
 
     def select_threshold(self) -> float:
-        """Choose a threshold via epsilon-greedy strategy.
+        """Choose a threshold via epsilon-greedy strategy with optional decay.
 
         Returns:
             Selected threshold value
@@ -80,6 +100,10 @@ class EpsilonGreedyThresholdSelector:
             chosen = float(max(mean_rewards, key=mean_rewards.get))
 
         self.pull_counts[chosen] += 1
+
+        # Decay epsilon (with floor)
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+
         return chosen
 
     # ------------------------------------------------------------- update
@@ -124,3 +148,53 @@ class EpsilonGreedyThresholdSelector:
             for t, r in self.rewards_by_arm.items()
         }
         return float(max(means, key=means.get))
+
+    # --------------------------------------------------------- persistence
+
+    def save_state(self) -> None:
+        """Persist RL state to JSON (survives restarts)."""
+        if not self.state_path:
+            raise ValueError("state_path was not configured at init")
+        Path(self.state_path).parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "candidate_thresholds": self.candidate_thresholds,
+            "epsilon": self.epsilon,
+            "epsilon_initial": self.epsilon_initial,
+            "epsilon_decay": self.epsilon_decay,
+            "epsilon_min": self.epsilon_min,
+            "reward_window": self.reward_window,
+            "total_pulls": self.total_pulls,
+            "pull_counts": {str(k): v for k, v in self.pull_counts.items()},
+            "rewards_by_arm": {
+                str(k): list(v) for k, v in self.rewards_by_arm.items()
+            },
+        }
+        with open(self.state_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+    def load_state(self) -> None:
+        """Restore RL state from JSON."""
+        if not self.state_path or not Path(self.state_path).exists():
+            return
+        with open(self.state_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        self.candidate_thresholds = payload.get(
+            "candidate_thresholds", self.candidate_thresholds
+        )
+        self.epsilon = payload.get("epsilon", self.epsilon)
+        self.epsilon_initial = payload.get("epsilon_initial", self.epsilon)
+        self.epsilon_decay = payload.get("epsilon_decay", self.epsilon_decay)
+        self.epsilon_min = payload.get("epsilon_min", self.epsilon_min)
+        self.reward_window = payload.get("reward_window", self.reward_window)
+        self.total_pulls = payload.get("total_pulls", 0)
+        self.pull_counts = defaultdict(
+            int, {float(k): v for k, v in payload.get("pull_counts", {}).items()}
+        )
+        self.rewards_by_arm = {
+            float(k): deque(v, maxlen=self.reward_window)
+            for k, v in payload.get("rewards_by_arm", {}).items()
+        }
+        # Ensure all candidate thresholds have a deque
+        for t in self.candidate_thresholds:
+            if t not in self.rewards_by_arm:
+                self.rewards_by_arm[t] = deque(maxlen=self.reward_window)

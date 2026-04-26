@@ -151,3 +151,68 @@ class TestEpsilonGreedyThresholdSelector:
             sel.update_reward(0.7, 1.0)
         sel.update_reward(0.5, -0.5)
         assert sel.best_threshold() == 0.7
+
+    def test_epsilon_decay_reduces_epsilon(self):
+        sel = EpsilonGreedyThresholdSelector(
+            epsilon=0.5, epsilon_decay=0.9, epsilon_min=0.01
+        )
+        initial = sel.epsilon
+        for _ in range(20):
+            sel.select_threshold()
+        assert sel.epsilon < initial
+        assert sel.epsilon >= sel.epsilon_min
+
+    def test_state_persistence_roundtrip(self, tmp_path):
+        state_path = str(tmp_path / "rl_state.json")
+        sel = EpsilonGreedyThresholdSelector(state_path=state_path)
+        sel.update_reward(0.3, 0.8)
+        sel.update_reward(0.5, -0.2)
+        sel.select_threshold()
+        sel.save_state()
+
+        # New instance auto-loads from same path
+        sel2 = EpsilonGreedyThresholdSelector(state_path=state_path)
+        assert sel2.total_pulls == sel.total_pulls
+        assert len(sel2.rewards_by_arm[0.3]) == 1
+        assert sel2.rewards_by_arm[0.3][0] == 0.8
+
+
+class TestFederatedWhitelist:
+    def test_whitelist_blocks_unauthorized(self):
+        from src.federated_aggregator import FederatedAggregator, ParticipantUpdate
+
+        agg = FederatedAggregator(
+            min_participants=2,
+            allowed_participants=["bank-A", "bank-B"],
+        )
+        updates = [
+            ParticipantUpdate("bank-A", np.ones(3), 100),
+            ParticipantUpdate("rogue-bank", np.ones(3), 100),
+        ]
+        with pytest.raises(PermissionError, match="Unauthorized"):
+            agg.aggregate(updates)
+
+    def test_whitelist_allows_authorized(self):
+        from src.federated_aggregator import FederatedAggregator, ParticipantUpdate
+
+        agg = FederatedAggregator(
+            min_participants=2,
+            allowed_participants=["bank-A", "bank-B"],
+        )
+        updates = [
+            ParticipantUpdate("bank-A", np.ones(3), 100),
+            ParticipantUpdate("bank-B", np.ones(3), 100),
+        ]
+        result = agg.aggregate(updates)
+        assert result["n_participants"] == 2
+
+    def test_no_whitelist_means_open(self):
+        from src.federated_aggregator import FederatedAggregator, ParticipantUpdate
+
+        agg = FederatedAggregator(min_participants=2, allowed_participants=None)
+        updates = [
+            ParticipantUpdate("any-id", np.ones(3), 100),
+            ParticipantUpdate("any-id-2", np.ones(3), 100),
+        ]
+        # Should not raise
+        agg.aggregate(updates)

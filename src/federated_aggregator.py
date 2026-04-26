@@ -46,6 +46,7 @@ class FederatedAggregator:
         dp_epsilon: float = 1.0,
         dp_clip_norm: float = 1.0,
         min_participants: int = 3,
+        allowed_participants: Optional[List[str]] = None,
     ):
         """
         Args:
@@ -54,6 +55,8 @@ class FederatedAggregator:
             dp_clip_norm: L2 norm clipping for individual updates (DP requirement)
             min_participants: Minimum participants required for aggregation
                               (prevents inference attacks from too few participants)
+            allowed_participants: Optional whitelist of participant IDs (None = open)
+                                  Required for production-grade BACEN compliance.
         """
         if dp_epsilon <= 0:
             raise ValueError("dp_epsilon must be positive")
@@ -66,6 +69,9 @@ class FederatedAggregator:
         self.dp_epsilon = dp_epsilon
         self.dp_clip_norm = dp_clip_norm
         self.min_participants = min_participants
+        self.allowed_participants = (
+            set(allowed_participants) if allowed_participants is not None else None
+        )
         self.round_number = 0
         self.history: List[Dict] = []
 
@@ -98,6 +104,19 @@ class FederatedAggregator:
         Returns:
             Dict with aggregated_weights, round_number, n_participants, total_samples
         """
+        # Authenticate participants against whitelist (if configured)
+        if self.allowed_participants is not None:
+            unauthorized = [
+                u.participant_id
+                for u in updates
+                if u.participant_id not in self.allowed_participants
+            ]
+            if unauthorized:
+                raise PermissionError(
+                    f"Unauthorized participants: {unauthorized}. "
+                    f"Allowed: {sorted(self.allowed_participants)}"
+                )
+
         if len(updates) < self.min_participants:
             raise ValueError(
                 f"Need at least {self.min_participants} participants for aggregation; "

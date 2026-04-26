@@ -4,9 +4,37 @@ Sistema de detecção de fraude em tempo real para transações bancárias brasi
 
 ## Versão
 
-**Versão Atual**: 1.7.0
+**Versão Atual**: 1.9.0
 **Data de Lançamento**: 26/04/2026
 **Última Atualização**: 26/04/2026
+
+### Mudanças na Versão 1.9.0 (Sprint 4 - Federated Learning + RL Adaptive)
+
+**Federated Learning**
+- `src/federated_aggregator.py`: FedAvg com Differential Privacy opcional
+- Whitelist de participantes (BACEN compliance)
+- Histórico sem armazenar weights raw (LGPD)
+- Pronto para integração com Flower / TensorFlow Federated
+
+**Reinforcement Learning - Threshold Adaptativo**
+- `src/rl_threshold.py`: Multi-armed bandit (epsilon-greedy)
+- Reward signal de feedback de analistas
+- Epsilon decay configurável + estado persistente em JSON
+- Adapta-se a concept drift sem retreinar
+
+### Mudanças na Versão 1.8.0 (Sprint 3 - AutoEncoder + GraphSAGE)
+
+**AutoEncoder para Fraude Zero-Day**
+- `src/autoencoder_anomaly.py`: MLP-based autoencoder (sklearn)
+- Treina apenas em transações legítimas (one-class)
+- Detecta NOVOS padrões de fraude não vistos no treino
+- AnomalyModelRepository (DI) + audit logging BACEN
+
+**SimpleGraphSAGE - Graph Embeddings**
+- `src/simple_graph_sage.py`: NumPy puro (sem PyTorch Geometric)
+- Embeddings inductive K-hop com mean aggregation
+- Detecção de money mules e padrões circulares
+- Output: vetor de 24 dimensões pronto para ML pipelines
 
 ### Mudanças na Versão 1.7.0 (Sprint 2 - Stacking + Open Finance + Re-treino)
 
@@ -879,10 +907,15 @@ anti-fraud-v3-wf/
 │   ├── feature_engineering.py    # Feature engineering
 │   ├── base_model.py             # BaseFraudModel (ABC) - lógica compartilhada
 │   ├── model.py                  # Modelo XGBoost + SHAP
-│   ├── ensemble_model.py         # EnsembleFraudModel (XGBoost + LightGBM + Calibração)
+│   ├── ml_mixins.py              # ThresholdTuningMixin + SHAPExplainerMixin
+│   ├── ensemble_model.py         # EnsembleFraudModel (XGBoost + LightGBM)
 │   ├── stacking_model.py         # StackingFraudModel (XGB + LGB + CatBoost -> LR)
+│   ├── autoencoder_anomaly.py    # AutoEncoderAnomalyDetector (zero-day)
+│   ├── simple_graph_sage.py      # SimpleGraphSAGE (graph embeddings)
+│   ├── federated_aggregator.py   # FederatedAggregator (FedAvg + DP)
+│   ├── rl_threshold.py           # EpsilonGreedyThresholdSelector (RL)
 │   ├── open_finance_features.py  # OpenFinanceFeatureExtractor (9 features)
-│   ├── repositories.py           # Repository Pattern (SQLite + JSON + Ensemble)
+│   ├── repositories.py           # Repository Pattern (SQLite + JSON + Ensemble + Anomaly)
 │   ├── rule_engine/              # Interpretador de Regras
 │   │   ├── __init__.py
 │   │   ├── parser.py             # Parser de linguagem natural
