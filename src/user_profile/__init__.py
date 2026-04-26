@@ -21,6 +21,10 @@ from .models import (
 from .service import UserProfileService
 from .anomaly_detector import AnomalyDetector
 from ..repositories import UserProfileRepository
+from .clustering import UserClusterer
+from .isolation_forest import MultivariateAnomalyDetector, EnsembleIsolationForest
+from .online_learning import AdaptiveUserProfile
+from .graph_features import GraphFeatureExtractor
 
 __all__ = [
     "UserProfile",
@@ -39,5 +43,10 @@ __all__ = [
     "Produtos",
     "UserProfileService",
     "UserProfileRepository",
-    "AnomalyDetector"
+    "AnomalyDetector",
+    "UserClusterer",
+    "MultivariateAnomalyDetector",
+    "EnsembleIsolationForest",
+    "AdaptiveUserProfile",
+    "GraphFeatureExtractor"
 ]

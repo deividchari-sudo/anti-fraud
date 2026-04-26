@@ -49,8 +49,8 @@ class UserProfileService:
         self.anomaly_detector = AnomalyDetector()
         self.cpf_hasher = get_cpf_hasher()
         self.temporal_extractor = TemporalFeatureExtractor()
-        self.clusterer = UserClusterer(n_clusters=5)
-        self.multivariate_detector = MultivariateAnomalyDetector(contamination=0.1)
+        self.clusterer = UserClusterer(n_clusters=10, clustering_method="kmeans")
+        self.multivariate_detector = MultivariateAnomalyDetector(contamination=0.1, auto_contamination=True)
         self.adaptive_profiles = {}  # In-memory adaptive profiles
         self.graph_extractor = GraphFeatureExtractor()
     
