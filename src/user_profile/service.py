@@ -28,6 +28,7 @@ from ..repositories import UserProfileRepository
 from ..crypto import get_cpf_hasher
 from .temporal_features import TemporalFeatureExtractor
 from .clustering import UserClusterer
+from .isolation_forest import MultivariateAnomalyDetector
 
 
 class UserProfileService:
@@ -47,6 +48,7 @@ class UserProfileService:
         self.cpf_hasher = get_cpf_hasher()
         self.temporal_extractor = TemporalFeatureExtractor()
         self.clusterer = UserClusterer(n_clusters=5)
+        self.multivariate_detector = MultivariateAnomalyDetector(contamination=0.1)
     
     def _hash_cpf(self, cpf: str) -> str:
         """Hash CPF for storage (LGPD compliance)."""
@@ -96,6 +98,48 @@ class UserProfileService:
         profile_dict = profile.dict()
         cluster_id = self.clusterer.predict(profile_dict)
         return cluster_id
+    
+    def train_multivariate_anomaly_detector(self, transactions: List[dict]) -> Dict:
+        """
+        Train Isolation Forest on transaction data.
+        
+        Args:
+            transactions: List of transaction dictionaries
+            
+        Returns:
+            Dictionary with training status
+        """
+        # Get user profiles for context
+        all_profiles = self.repository.list_all_profiles()
+        
+        # Fit the detector
+        try:
+            self.multivariate_detector.fit(transactions, all_profiles)
+            return {
+                "status": "success",
+                "model_fitted": True,
+                "contamination": self.multivariate_detector.contamination
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "model_fitted": False
+            }
+    
+    def detect_multivariate_anomaly(self, transaction: dict, profile: Optional[UserProfile] = None) -> Dict:
+        """
+        Detect multivariate anomaly using Isolation Forest.
+        
+        Args:
+            transaction: Transaction dictionary
+            profile: User profile for context (optional)
+            
+        Returns:
+            Dictionary with anomaly prediction
+        """
+        profile_dict = profile.dict() if profile else None
+        return self.multivariate_detector.predict(transaction, profile_dict)
     
     def calculate_profile(self, transactions: List[dict], cpf: str) -> UserProfile:
         """
