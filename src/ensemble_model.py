@@ -21,31 +21,20 @@ from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     f1_score,
-    precision_recall_curve,
     precision_score,
     recall_score,
     roc_auc_score,
 )
 
 from src.base_model import DEFAULT_THRESHOLD, BaseFraudModel
+from src.ml_mixins import SHAPExplainerMixin, ThresholdTuningMixin
 from src.repositories import (
     EnsembleModelRepository,
     JoblibEnsembleModelRepository,
 )
 
-# Channel feature columns (one-hot encoded in feature engineering)
-CHANNEL_FEATURES = ["canal_app", "canal_web", "canal_api"]
-# Product feature columns (one-hot encoded in feature engineering)
-PRODUCT_FEATURES = [
-    "produto_pix",
-    "produto_ted",
-    "produto_boleto",
-    "produto_autenticacao",
-    "produto_financeiro_generico",
-]
 
-
-class EnsembleFraudModel(BaseFraudModel):
+class EnsembleFraudModel(BaseFraudModel, ThresholdTuningMixin, SHAPExplainerMixin):
     """Ensemble fraud detection model: XGBoost + LightGBM with calibration and per-channel thresholds."""
 
     def __init__(
@@ -240,59 +229,13 @@ class EnsembleFraudModel(BaseFraudModel):
     # ------------------------------------------------------- threshold tuning
 
     def _optimize_thresholds(self, X_test: pd.DataFrame, y_test: pd.Series):
-        """Find optimal F1 threshold globally and per channel/product."""
+        """Find optimal F1 threshold globally and per channel/product (delegates to mixin)."""
         proba = self._ensemble_proba(X_test)
-
-        # Global optimal threshold
-        global_thr = self._best_f1_threshold(y_test.values, proba)
+        self.optimize_thresholds(proba, X_test, y_test)
         print(f"\n=== Threshold Optimization ===")
-        print(f"Global optimal threshold (F1): {global_thr:.4f}")
-
-        self.threshold = float(global_thr) if global_thr is not None else DEFAULT_THRESHOLD
-
-        # Per-channel thresholds
-        for col in CHANNEL_FEATURES:
-            if col in X_test.columns:
-                mask = X_test[col] == 1
-                if mask.sum() > 50 and y_test[mask].sum() > 0:
-                    thr = self._best_f1_threshold(y_test[mask].values, proba[mask])
-                    if thr is not None:
-                        self.thresholds_by_channel[col] = float(thr)
-
-        # Per-product thresholds
-        for col in PRODUCT_FEATURES:
-            if col in X_test.columns:
-                mask = X_test[col] == 1
-                if mask.sum() > 50 and y_test[mask].sum() > 0:
-                    thr = self._best_f1_threshold(y_test[mask].values, proba[mask])
-                    if thr is not None:
-                        self.thresholds_by_product[col] = float(thr)
-
+        print(f"Global optimal threshold (F1): {self.threshold:.4f}")
         print(f"Thresholds by channel: {self.thresholds_by_channel}")
         print(f"Thresholds by product: {self.thresholds_by_product}")
-
-    @staticmethod
-    def _best_f1_threshold(y_true: np.ndarray, proba: np.ndarray) -> Optional[float]:
-        """Find threshold maximizing F1-Score."""
-        if len(np.unique(y_true)) < 2:
-            return None
-        precisions, recalls, thresholds = precision_recall_curve(y_true, proba)
-        f1s = 2 * (precisions * recalls) / (precisions + recalls + 1e-8)
-        best_idx = int(np.argmax(f1s))
-        if best_idx >= len(thresholds):
-            return None
-        return float(thresholds[best_idx])
-
-    def _select_threshold(self, features_row: pd.Series) -> float:
-        """Pick best threshold for a transaction based on its channel/product."""
-        # Product-specific threshold takes priority (more granular)
-        for col, thr in self.thresholds_by_product.items():
-            if col in features_row.index and features_row[col] == 1:
-                return thr
-        for col, thr in self.thresholds_by_channel.items():
-            if col in features_row.index and features_row[col] == 1:
-                return thr
-        return self.threshold
 
     # ------------------------------------------------------------- prediction
 
@@ -307,12 +250,14 @@ class EnsembleFraudModel(BaseFraudModel):
         X = self._align_features(features)
 
         fraud_probability = float(self._ensemble_proba(X)[0])
-        threshold_used = self._select_threshold(X.iloc[0])
+        threshold_used = self.select_threshold(X.iloc[0])
         is_fraud = fraud_probability >= threshold_used
 
         explanation = None
         if is_fraud and self.explainer is not None:
-            explanation = self._get_explanation(X, fraud_probability)
+            explanation = self.get_shap_explanation(
+                X, fraud_probability, model_name="ensemble_xgb_lgb_calibrated"
+            )
 
         # Use shared decision logging from BaseFraudModel
         self._log_decision(
@@ -324,61 +269,6 @@ class EnsembleFraudModel(BaseFraudModel):
             model_name="ensemble_xgb_lgb",
         )
         return fraud_probability, is_fraud, explanation
-
-    def _get_explanation(
-        self, X: pd.DataFrame, fraud_probability: float
-    ) -> Optional[Dict[str, Any]]:
-        """SHAP explanation using underlying XGBoost (calibrated wrapper)."""
-        try:
-            shap_values = self.explainer.shap_values(X)
-            if isinstance(shap_values, list):
-                shap_values = shap_values[0]
-
-            expected_value = self.explainer.expected_value
-            base_value = (
-                float(expected_value[0])
-                if isinstance(expected_value, (list, np.ndarray))
-                and len(np.atleast_1d(expected_value)) > 0
-                else float(expected_value)
-            )
-
-            contributions = {}
-            for i, feature in enumerate(self.feature_names):
-                if isinstance(shap_values, np.ndarray) and shap_values.ndim > 1:
-                    contribution = float(shap_values[0][i])
-                else:
-                    contribution = float(shap_values[i])
-                if abs(contribution) > 0.01:
-                    contributions[feature] = contribution
-
-            sorted_contributions = dict(
-                sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)
-            )
-            top_features = dict(list(sorted_contributions.items())[:10])
-
-            return {
-                "base_value": base_value,
-                "fraud_probability": fraud_probability,
-                "top_contributing_features": top_features,
-                "explanation_summary": self._summarize(top_features),
-                "model": "ensemble_xgb_lgb_calibrated",
-            }
-        except Exception as e:
-            self.logger.error(f"SHAP explanation error: {e}")
-            return None
-
-    @staticmethod
-    def _summarize(top_features: Dict[str, float]) -> str:
-        if not top_features:
-            return "No significant features."
-        positives = [f for f, v in top_features.items() if v > 0][:3]
-        negatives = [f for f, v in top_features.items() if v < 0][:3]
-        parts = []
-        if positives:
-            parts.append(f"Indicadores de fraude: {', '.join(positives)}")
-        if negatives:
-            parts.append(f"Indicadores legítimos: {', '.join(negatives)}")
-        return ". ".join(parts)
 
     # -------------------------------------------------------- persistence I/O
 

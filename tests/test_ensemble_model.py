@@ -146,15 +146,15 @@ class TestEnsembleFraudModel:
 
         # PIX transaction via app: product threshold wins
         row = pd.Series({"produto_pix": 1, "canal_app": 1})
-        assert model._select_threshold(row) == 0.3
+        assert model.select_threshold(row) == 0.3
 
         # Channel-only: app via boleto (product not configured)
         row2 = pd.Series({"produto_pix": 0, "canal_app": 1})
-        assert model._select_threshold(row2) == 0.4
+        assert model.select_threshold(row2) == 0.4
 
         # No match: global default
         row3 = pd.Series({"produto_pix": 0, "canal_app": 0})
-        assert model._select_threshold(row3) == 0.5
+        assert model.select_threshold(row3) == 0.5
 
     def test_feature_importance(self, sample_data, tmp_path):
         model_path = str(tmp_path / "test_ensemble5.pkl")
