@@ -52,7 +52,7 @@ app = FastAPI(
 - Regras: ~5ms
 - Modelo ML: ~13ms
 """,
-    version="1.4.0",
+    version="1.5.0",
 )
 
 # CORS middleware
@@ -107,7 +107,7 @@ async def health_check():
         >>> GET /health
         >>> {"status": "healthy", "model_loaded": true, "version": "1.3.0"}
     """
-    return HealthResponse(status="healthy", model_loaded=model_loaded, version="1.4.0")
+    return HealthResponse(status="healthy", model_loaded=model_loaded, version="1.5.0")
 
 
 @app.post("/predict", response_model=FraudPrediction, tags=["Prediction"])

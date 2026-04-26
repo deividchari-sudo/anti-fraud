@@ -195,19 +195,24 @@ class DatasetExpander:
         print(f"Dataset saved to {output_path}")
 
 
-def main():
+def main(target_size: int = 90000):
     """Main function to generate expanded dataset."""
+    import sys
+    if len(sys.argv) > 1:
+        target_size = int(sys.argv[1])
+    
     expander = DatasetExpander('dataset_transacoes.csv')
     
     # Generate expanded dataset
-    expanded_df = expander.generate_expanded_dataset(target_size=50000)
+    expanded_df = expander.generate_expanded_dataset(target_size=target_size)
     
     # Save expanded dataset
     expander.save_dataset(expanded_df, 'dataset_transacoes_expanded.csv')
     
     print("\n=== Dataset Expansion Complete ===")
     print(f"Original: 10,000 samples")
-    print(f"Expanded: 50,000 samples")
+    print(f"Generated: {target_size} new samples")
+    print(f"Total: {len(expanded_df)} samples")
     print(f"Output: dataset_transacoes_expanded.csv")
 
 

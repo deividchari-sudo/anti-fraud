@@ -4,9 +4,30 @@ Sistema de detecção de fraude em tempo real para transações bancárias brasi
 
 ## Versão
 
-**Versão Atual**: 1.4.0  
+**Versão Atual**: 1.5.0  
 **Data de Lançamento**: 25/04/2026  
 **Última Atualização**: 25/04/2026
+
+### Mudanças na Versão 1.5.0 (Dataset Expandido para 100k)
+
+**Dataset**
+- Expandido de 60.000 para 100.000 amostras (atinge meta do BACEN)
+- Distribuição: 99.000 legítimas / 1.000 fraudes (1% taxa de fraude)
+- Script `generate_expanded_dataset.py` parametrizável via CLI
+
+**Re-treinamento do Modelo XGBoost**
+- AUC-ROC: 0.8307 → **0.8395** (+1.05%)
+- F1-Score @ threshold 0.5: 0.2412 → 0.1375
+- F1-Score @ threshold ótimo (0.889): **0.2778** (+15.2%)
+- Recall (fraude): **0.5950** (detecta 59% das fraudes)
+- 80k treino / 20k teste com SMOTE balanceado
+
+**Top Features Atualizadas**
+1. faixa_valor_alta (0.0846)
+2. faixa_valor_media (0.0729)
+3. fim_de_semana (0.0576)
+4. canal_api (0.0455)
+5. canal_web (0.0452)
 
 ### Mudanças na Versão 1.4.0 (Melhorias Especialista de Dados)
 
@@ -185,7 +206,7 @@ python train_model.py
 ```
 
 Este script:
-1. Carrega o dataset expandido (60.000 amostras)
+1. Carrega o dataset expandido (100.000 amostras)
 2. Extrai 71 features
 3. Aplica SMOTE para balanceamento
 4. Treina modelo XGBoost
@@ -634,10 +655,12 @@ print(result)
 
 | Métrica | Valor | Meta | Status |
 |---------|-------|------|--------|
-| Latência | 28ms | <100ms | 
-| AUC-ROC | 0.8307 | >0.90 | 
-| F1-Score | 0.2412 | >0.85 | 
-| Dataset | 60.000 amostras | 100.000+ | 
+| Latência | 28ms | <100ms | ✅ |
+| AUC-ROC | 0.8395 | >0.90 | ⚠️ |
+| F1-Score (threshold 0.5) | 0.1375 | >0.85 | ⚠️ |
+| F1-Score (threshold ótimo 0.889) | 0.2778 | >0.85 | ⚠️ |
+| Recall (Fraude) | 0.5950 | >0.85 | ⚠️ |
+| Dataset | 100.000 amostras | 100.000+ | ✅ |
 | Explicabilidade | SHAP | Obrigatório | 
 | Logging Auditável | 100% | 100% | 
 
@@ -830,7 +853,7 @@ anti-fraud-v3-wf/
 ├── .github/workflows/            # CI/CD
 │   └── ci.yml
 ├── dataset_transacoes.csv        # Dataset original (10k)
-├── dataset_transacoes_expanded.csv  # Dataset expandido (60k)
+├── dataset_transacoes_expanded.csv  # Dataset expandido (100k)
 ├── generate_expanded_dataset.py
 ├── train_model.py
 ├── config.py                     # Configuration Management
