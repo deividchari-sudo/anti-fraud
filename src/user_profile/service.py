@@ -30,6 +30,7 @@ from .temporal_features import TemporalFeatureExtractor
 from .clustering import UserClusterer
 from .isolation_forest import MultivariateAnomalyDetector
 from .online_learning import AdaptiveUserProfile
+from .graph_features import GraphFeatureExtractor
 
 
 class UserProfileService:
@@ -51,6 +52,7 @@ class UserProfileService:
         self.clusterer = UserClusterer(n_clusters=5)
         self.multivariate_detector = MultivariateAnomalyDetector(contamination=0.1)
         self.adaptive_profiles = {}  # In-memory adaptive profiles
+        self.graph_extractor = GraphFeatureExtractor()
     
     def _hash_cpf(self, cpf: str) -> str:
         """Hash CPF for storage (LGPD compliance)."""
@@ -185,6 +187,40 @@ class UserProfileService:
         """
         adaptive_profile = self.get_or_create_adaptive_profile(cpf)
         return adaptive_profile.detect_anomaly(transaction)
+    
+    def build_transaction_graph(self, transactions: List[dict]):
+        """
+        Build transaction graph from transaction history.
+        
+        Args:
+            transactions: List of transaction dictionaries
+        """
+        self.graph_extractor.build_graph(transactions)
+    
+    def detect_graph_anomaly(self, transaction: dict, threshold_degree: int = 50) -> Dict:
+        """
+        Detect graph-based anomalies in a transaction.
+        
+        Args:
+            transaction: Transaction dictionary
+            threshold_degree: Degree threshold for anomaly detection
+            
+        Returns:
+            Dictionary with anomaly detection result
+        """
+        return self.graph_extractor.detect_graph_anomaly(transaction, threshold_degree)
+    
+    def get_graph_features(self, cpf: str) -> Dict:
+        """
+        Get graph-based features for a specific CPF.
+        
+        Args:
+            cpf: CPF to extract features for
+            
+        Returns:
+            Dictionary with graph features
+        """
+        return self.graph_extractor.extract_node_features(cpf)
     
     def calculate_profile(self, transactions: List[dict], cpf: str) -> UserProfile:
         """
