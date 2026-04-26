@@ -10,6 +10,7 @@ import shutil
 
 from src.user_profile.service import UserProfileService
 from src.repositories import JSONUserProfileRepository
+from src.crypto import get_cpf_hasher
 
 
 @pytest.fixture
@@ -68,10 +69,12 @@ class TestUserProfileService:
     def test_calculate_profile_basic(self, temp_repo, sample_transactions):
         """Test basic profile calculation."""
         service = UserProfileService(temp_repo)
+        cpf_hasher = get_cpf_hasher()
+        hashed_cpf = cpf_hasher.hash_cpf("12345678901")
         
         profile = service.calculate_profile(sample_transactions, "12345678901")
         
-        assert profile.cpf == "12345678901"
+        assert profile.cpf == hashed_cpf  # CPF is now hashed
         assert profile.transaction_count == 3
         assert profile.statistics.valor.mean == 150.0
         assert profile.statistics.valor.min == 100.0
@@ -103,35 +106,41 @@ class TestUserProfileService:
     def test_get_or_create_profile_existing(self, temp_repo, sample_transactions):
         """Test getting existing profile."""
         service = UserProfileService(temp_repo)
+        cpf_hasher = get_cpf_hasher()
+        hashed_cpf = cpf_hasher.hash_cpf("12345678901")
         
         # Create and save profile
         profile = service.calculate_profile(sample_transactions, "12345678901")
-        temp_repo.save_profile("12345678901", profile)
+        temp_repo.save_profile(hashed_cpf, profile)
         
         # Get profile
         retrieved_profile = service.get_or_create_profile("12345678901")
         
-        assert retrieved_profile.cpf == "12345678901"
+        assert retrieved_profile.cpf == hashed_cpf  # CPF is now hashed
         assert retrieved_profile.transaction_count == 3
     
     def test_get_or_create_profile_cold_start(self, temp_repo):
         """Test creating profile for cold start (global profile fallback)."""
         service = UserProfileService(temp_repo)
+        cpf_hasher = get_cpf_hasher()
+        hashed_cpf = cpf_hasher.hash_cpf("99999999999")
         
         # No profile exists, should use global profile or minimal profile
         profile = service.get_or_create_profile("99999999999")
         
-        assert profile.cpf == "99999999999"
+        assert profile.cpf == hashed_cpf  # CPF is now hashed
         assert profile.is_cold_start
         assert profile.transaction_count == 0
     
     def test_update_profile(self, temp_repo, sample_transactions):
         """Test updating profile with new transaction."""
         service = UserProfileService(temp_repo)
+        cpf_hasher = get_cpf_hasher()
+        hashed_cpf = cpf_hasher.hash_cpf("12345678901")
         
         # Create initial profile
         profile = service.calculate_profile(sample_transactions, "12345678901")
-        temp_repo.save_profile("12345678901", profile)
+        temp_repo.save_profile(hashed_cpf, profile)
         
         # Update with new transaction
         new_transaction = {
@@ -147,16 +156,18 @@ class TestUserProfileService:
         service.update_profile("12345678901", new_transaction)
         
         # Verify update
-        updated_profile = temp_repo.load_profile("12345678901")
+        updated_profile = temp_repo.load_profile(hashed_cpf)
         assert updated_profile.transaction_count == 4
     
     def test_analyze_transaction(self, temp_repo, sample_transactions):
         """Test analyzing transaction with behavioral profiling."""
         service = UserProfileService(temp_repo)
+        cpf_hasher = get_cpf_hasher()
+        hashed_cpf = cpf_hasher.hash_cpf("12345678901")
         
         # Create profile first
         profile = service.calculate_profile(sample_transactions, "12345678901")
-        temp_repo.save_profile("12345678901", profile)
+        temp_repo.save_profile(hashed_cpf, profile)
         
         # Analyze normal transaction
         normal_transaction = sample_transactions[0]
