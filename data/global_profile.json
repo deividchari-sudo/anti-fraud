@@ -1,7 +1,69 @@
 {
-  "global_profile": null,
+  "global_profile": {
+    "statistics": {
+      "valor": {
+        "mean": 2360.479888246149,
+        "std": 1312.6775463635588,
+        "median": 2085.85,
+        "p25": 1442.145,
+        "p75": 3017.925,
+        "p95": 4751.375,
+        "min": 1.4,
+        "max": 22717.35
+      },
+      "hora": {
+        "mean": 11.563533333333334,
+        "std": 6.966842674331672,
+        "median": 12.0,
+        "p25": 6.0,
+        "p75": 18.0
+      },
+      "frequencia": {
+        "transactions_per_day_mean": 1935.48,
+        "transactions_per_day_std": 580.65,
+        "days_active": 31
+      }
+    },
+    "canais": {
+      "app": {
+        "count": 20025,
+        "percentage": 0.33
+      },
+      "web": {
+        "count": 19599,
+        "percentage": 0.33
+      },
+      "api": {
+        "count": 20376,
+        "percentage": 0.34
+      }
+    },
+    "produtos": {
+      "pix": {
+        "count": 12367,
+        "percentage": 0.21
+      },
+      "ted": {
+        "count": 11544,
+        "percentage": 0.19
+      },
+      "boleto": {
+        "count": 12372,
+        "percentage": 0.21
+      },
+      "autenticacao": {
+        "count": 11769,
+        "percentage": 0.2
+      }
+    },
+    "destinations": {
+      "common_cpfs": {},
+      "common_bancos": {}
+    }
+  },
   "metadata": {
-    "last_updated": "2026-04-25T21:00:00Z",
+    "based_on_transactions": 60000,
+    "last_updated": "2026-04-26T00:12:51.048862",
     "version": "1.0.0"
   }
 }

@@ -10,9 +10,10 @@ from collections import defaultdict
 import json
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from user_profile.service import UserProfileService
+from src.user_profile.service import UserProfileService
+from src.crypto import get_cpf_hasher
 
 
 class MockUserProfileRepository:
@@ -80,20 +81,11 @@ def group_transactions_by_cpf(df: pd.DataFrame) -> dict:
     """Group transactions by sender CPF."""
     print("📊 Grouping transactions by CPF...")
     
-    # Normalize column names
-    df.columns = [col.lower().replace('.', '_') for col in df.columns]
+    # Parse JSON payload column
+    df['parsed_payload'] = df['payload'].apply(lambda x: json.loads(x) if isinstance(x, str) else x)
     
-    # Extract CPF from nested structure if needed
-    if 'sender' in df.columns:
-        # Parse JSON sender column if it's a string
-        if df['sender'].dtype == 'object':
-            df['sender'] = df['sender'].apply(lambda x: eval(x) if isinstance(x, str) else x)
-        
-        df['cpf_sender'] = df['sender'].apply(lambda x: x.get('cpfSender') if isinstance(x, dict) else None)
-    elif 'cpf_sender' in df.columns:
-        df['cpf_sender'] = df['cpf_sender']
-    else:
-        raise ValueError("Could not find CPF column in dataset")
+    # Extract CPF from parsed payload
+    df['cpf_sender'] = df['parsed_payload'].apply(lambda x: x.get('sender', {}).get('cpfSender') if isinstance(x, dict) else None)
     
     # Filter out rows without CPF
     df = df[df['cpf_sender'].notna()]
@@ -103,8 +95,8 @@ def group_transactions_by_cpf(df: pd.DataFrame) -> dict:
     cpf_groups = defaultdict(list)
     for _, row in df.iterrows():
         cpf = row['cpf_sender']
-        # Convert row to dict
-        transaction = row.to_dict()
+        # Use the parsed payload as transaction
+        transaction = row['parsed_payload']
         cpf_groups[cpf].append(transaction)
     
     print(f"✅ Found {len(cpf_groups)} unique CPFs")
@@ -123,7 +115,7 @@ def backfill_profiles(dataset_path: str = "dataset_transacoes_expanded.csv",
         output_file: Output JSON file for profiles
     """
     print("=" * 60)
-    print("BEHAVIORAL PROFILING - BACKFILL SCRIPT")
+    print("BEHAVIORAL PROFILING - BACKFILL SCRIPT (WITH CPF HASHING)")
     print("=" * 60)
     
     # Load dataset
@@ -134,6 +126,7 @@ def backfill_profiles(dataset_path: str = "dataset_transacoes_expanded.csv",
     
     # Create service with mock repository
     repository = MockUserProfileRepository()
+    cpf_hasher = get_cpf_hasher()
     service = UserProfileService(repository)
     
     # Generate profiles
@@ -145,7 +138,7 @@ def backfill_profiles(dataset_path: str = "dataset_transacoes_expanded.csv",
         if len(transactions) >= min_transactions:
             try:
                 profile = service.calculate_profile(transactions, cpf)
-                repository.save_profile(cpf, profile)
+                repository.save_profile(cpf_hasher.hash_cpf(cpf), profile)
                 profiles_created += 1
                 
                 if profiles_created % 100 == 0:
@@ -159,6 +152,7 @@ def backfill_profiles(dataset_path: str = "dataset_transacoes_expanded.csv",
     print(f"\n✅ Profile generation complete:")
     print(f"   - Profiles created: {profiles_created}")
     print(f"   - Profiles skipped (< {min_transactions} transactions): {profiles_skipped}")
+    print(f"   - CPF hashing: ENABLED (LGPD compliant)")
     
     # Export to JSON
     repository.export_to_json(output_file)

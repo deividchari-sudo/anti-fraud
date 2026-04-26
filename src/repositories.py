@@ -123,13 +123,17 @@ class UserProfileRepository(ABC):
 
 
 class JSONUserProfileRepository(UserProfileRepository):
-    """JSON-based implementation of user profile repository."""
+    """JSON-based implementation of user profile repository with cache."""
 
     def __init__(self, profiles_file: str = "data/user_profiles.json",
                  global_profile_file: str = "data/global_profile.json"):
         self.profiles_file = Path(profiles_file)
         self.global_profile_file = Path(global_profile_file)
         self._ensure_files_exist()
+        # Simple in-memory cache
+        self._profiles_cache = {}
+        self._global_profile_cache = None
+        self._load_cache()
 
     def _ensure_files_exist(self):
         """Ensure JSON files exist with proper structure."""
@@ -158,6 +162,20 @@ class JSONUserProfileRepository(UserProfileRepository):
             with open(self.global_profile_file, 'w', encoding='utf-8') as f:
                 json.dump(initial_data, f, indent=2)
 
+    def _load_cache(self):
+        """Load profiles into memory cache."""
+        try:
+            data = self._load_json(self.profiles_file)
+            self._profiles_cache = data.get("profiles", {})
+        except Exception:
+            self._profiles_cache = {}
+        
+        # Load global profile cache
+        try:
+            self._global_profile_cache = self.load_global_profile()
+        except Exception:
+            self._global_profile_cache = None
+
     def _load_json(self, file_path: Path) -> dict:
         """Load JSON file."""
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -183,11 +201,14 @@ class JSONUserProfileRepository(UserProfileRepository):
         data["metadata"]["last_sync"] = datetime.utcnow().isoformat()
         
         self._save_json(self.profiles_file, data)
+        
+        # Update cache
+        self._profiles_cache[cpf] = profile_dict
 
     def load_profile(self, cpf: str) -> Optional:
-        """Load user profile from JSON."""
-        data = self._load_json(self.profiles_file)
-        profile_data = data["profiles"].get(cpf)
+        """Load user profile from JSON (uses cache)."""
+        # Try cache first
+        profile_data = self._profiles_cache.get(cpf)
         
         if profile_data is None:
             return None
@@ -200,7 +221,11 @@ class JSONUserProfileRepository(UserProfileRepository):
         return UserProfile(**profile_data)
 
     def load_global_profile(self) -> Optional:
-        """Load global profile from JSON."""
+        """Load global profile from JSON (uses cache)."""
+        # Return cached version if available
+        if self._global_profile_cache is not None:
+            return self._global_profile_cache
+        
         data = self._load_json(self.global_profile_file)
         global_profile_data = data.get("global_profile")
         
@@ -218,7 +243,7 @@ class JSONUserProfileRepository(UserProfileRepository):
         canais_data = global_profile_data.get("canais", {})
         produtos_data = global_profile_data.get("produtos", {})
         
-        return UserProfile(
+        profile = UserProfile(
             cpf="GLOBAL",
             created_at=datetime.utcnow(),
             last_updated=datetime.utcnow(),
@@ -229,6 +254,10 @@ class JSONUserProfileRepository(UserProfileRepository):
             canais=Canais(**canais_data),
             produtos=Produtos(**produtos_data)
         )
+        
+        # Cache the global profile
+        self._global_profile_cache = profile
+        return profile
 
     def delete_profile(self, cpf: str) -> bool:
         """Delete user profile from JSON."""
@@ -239,6 +268,11 @@ class JSONUserProfileRepository(UserProfileRepository):
             data["metadata"]["total_profiles"] = len(data["profiles"])
             data["metadata"]["last_sync"] = datetime.utcnow().isoformat()
             self._save_json(self.profiles_file, data)
+            
+            # Update cache
+            if cpf in self._profiles_cache:
+                del self._profiles_cache[cpf]
+            
             return True
         
         return False

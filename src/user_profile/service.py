@@ -25,6 +25,7 @@ from .models import (
 )
 from .anomaly_detector import AnomalyDetector
 from ..repositories import UserProfileRepository
+from ..crypto import get_cpf_hasher
 
 
 class UserProfileService:
@@ -41,6 +42,11 @@ class UserProfileService:
         """
         self.repository = repository
         self.anomaly_detector = AnomalyDetector()
+        self.cpf_hasher = get_cpf_hasher()
+    
+    def _hash_cpf(self, cpf: str) -> str:
+        """Hash CPF for storage (LGPD compliance)."""
+        return self.cpf_hasher.hash_cpf(cpf)
     
     def calculate_profile(self, transactions: List[dict], cpf: str) -> UserProfile:
         """
@@ -48,13 +54,16 @@ class UserProfileService:
         
         Args:
             transactions: List of transaction dictionaries
-            cpf: User CPF
+            cpf: User CPF (will be hashed for storage)
             
         Returns:
             UserProfile with calculated statistics
         """
         if not transactions:
             raise ValueError("Cannot calculate profile from empty transaction list")
+        
+        # Hash CPF for storage
+        hashed_cpf = self._hash_cpf(cpf)
         
         # Extract values
         valores = [float(t.get("valor", 0)) for t in transactions if t.get("valor", 0) > 0]
@@ -92,7 +101,7 @@ class UserProfileService:
         now = datetime.utcnow()
         
         return UserProfile(
-            cpf=cpf,
+            cpf=hashed_cpf,  # Store hashed CPF
             created_at=now,
             last_updated=now,
             transaction_count=len(transactions),
@@ -278,19 +287,20 @@ class UserProfileService:
         Get existing profile or create global profile (cold start).
         
         Args:
-            cpf: User CPF
+            cpf: User CPF (will be hashed for lookup)
             
         Returns:
             UserProfile (existing or global profile for cold start)
         """
-        profile = self.repository.load_profile(cpf)
+        hashed_cpf = self._hash_cpf(cpf)
+        profile = self.repository.load_profile(hashed_cpf)
         
         if profile is None:
             # Cold start: use global profile
             global_profile = self.repository.load_global_profile()
             if global_profile:
                 profile = UserProfile(
-                    cpf=cpf,
+                    cpf=hashed_cpf,  # Use hashed CPF
                     created_at=datetime.utcnow(),
                     last_updated=datetime.utcnow(),
                     transaction_count=0,
@@ -302,7 +312,7 @@ class UserProfileService:
                 )
             else:
                 # Fallback: create minimal profile
-                profile = self._create_minimal_profile(cpf)
+                profile = self._create_minimal_profile(hashed_cpf)
         
         return profile
     
@@ -350,10 +360,11 @@ class UserProfileService:
         Update profile with new transaction (incremental update).
         
         Args:
-            cpf: User CPF
+            cpf: User CPF (will be hashed for lookup)
             transaction: New transaction
         """
-        profile = self.repository.load_profile(cpf)
+        hashed_cpf = self._hash_cpf(cpf)
+        profile = self.repository.load_profile(hashed_cpf)
         
         if profile is None:
             # Create new profile from single transaction
@@ -367,7 +378,7 @@ class UserProfileService:
             if profile.transaction_count >= self.MIN_TRANSACTIONS_FOR_PROFILE:
                 profile.is_cold_start = False
         
-        self.repository.save_profile(cpf, profile)
+        self.repository.save_profile(hashed_cpf, profile)
     
     def detect_anomaly(self, transaction: dict, profile: UserProfile) -> AnomalyResult:
         """

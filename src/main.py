@@ -13,6 +13,7 @@ from src.models import FraudPrediction, HealthResponse, TransactionRequest
 from src.repositories import JoblibModelRepository, JSONUserProfileRepository
 from src.rule_engine import RuleEvaluator, RuleParser
 from src.user_profile import UserProfileService
+from src.crypto import get_cpf_hasher
 
 app = FastAPI(
     title="Fraud Detection API",
@@ -368,7 +369,7 @@ async def evaluate_rules(transaction: dict):
 
 @app.get("/profile/{cpf}")
 async def get_user_profile(cpf: str):
-    """Get user behavioral profile."""
+    """Get user behavioral profile (CPF will be hashed for lookup)."""
     try:
         profile = user_profile_service.get_or_create_profile(cpf)
         return profile.dict()
@@ -387,8 +388,12 @@ class AnomalyFeedbackRequest(BaseModel):
 
 @app.post("/feedback/anomaly")
 async def submit_anomaly_feedback(request: AnomalyFeedbackRequest):
-    """Submit feedback about anomaly detection from analysts."""
+    """Submit feedback about anomaly detection from analysts (CPF will be hashed)."""
     try:
+        # Hash CPF for storage
+        cpf_hasher = get_cpf_hasher()
+        hashed_cpf = cpf_hasher.hash_cpf(request.cpf)
+        
         # Load existing feedback
         import json
         from pathlib import Path
@@ -403,7 +408,7 @@ async def submit_anomaly_feedback(request: AnomalyFeedbackRequest):
         # Add new feedback
         feedback_entry = {
             "transaction_id": request.transaction_id,
-            "cpf": request.cpf,
+            "cpf": hashed_cpf,  # Store hashed CPF
             "timestamp": datetime.utcnow().isoformat(),
             "is_true_anomaly": request.is_true_anomaly,
             "analyst_id": request.analyst_id,
@@ -419,7 +424,7 @@ async def submit_anomaly_feedback(request: AnomalyFeedbackRequest):
         with open(feedback_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, default=str)
         
-        return {"status": "recorded", "transaction_id": request.transaction_id}
+        return {"status": "recorded", "transaction_id": request.transaction_id, "cpf_hashed": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error recording feedback: {str(e)}")
 

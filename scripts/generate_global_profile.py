@@ -11,9 +11,9 @@ from datetime import datetime
 import json
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from user_profile.models import (
+from src.user_profile.models import (
     UserProfile,
     Statistics,
     ValueStatistics,
@@ -49,21 +49,23 @@ def calculate_global_statistics(df: pd.DataFrame) -> Statistics:
     """Calculate global statistics from all transactions."""
     print("📊 Calculating global statistics...")
     
-    # Normalize column names
-    df.columns = [col.lower().replace('.', '_') for col in df.columns]
+    # Parse JSON payload column
+    df['parsed_payload'] = df['payload'].apply(lambda x: json.loads(x) if isinstance(x, str) else x)
     
     # Extract values
-    valores = df['valor'].apply(lambda x: float(x) if pd.notna(x) and x > 0 else None).dropna()
+    valores = df['parsed_payload'].apply(lambda x: float(x.get("valor", 0)) if isinstance(x, dict) and x.get("valor", 0) > 0 else None).dropna()
     
     # Extract hours
     horas = []
-    for timestamp in df['timestamp']:
-        if pd.notna(timestamp):
-            try:
-                dt = pd.to_datetime(timestamp)
-                horas.append(dt.hour)
-            except:
-                pass
+    for payload in df['parsed_payload']:
+        if isinstance(payload, dict):
+            timestamp = payload.get("timestamp", "")
+            if timestamp:
+                try:
+                    dt = pd.to_datetime(timestamp)
+                    horas.append(dt.hour)
+                except:
+                    pass
     
     # Calculate value statistics
     valor_stats = ValueStatistics(
@@ -94,7 +96,7 @@ def calculate_global_statistics(df: pd.DataFrame) -> Statistics:
         )
     
     # Calculate frequency statistics (simplified)
-    unique_days = df['timestamp'].apply(lambda x: pd.to_datetime(x).date() if pd.notna(x) else None).nunique()
+    unique_days = df['parsed_payload'].apply(lambda x: pd.to_datetime(x.get("timestamp", "")).date() if isinstance(x, dict) and x.get("timestamp") else None).nunique()
     total_transactions = len(df)
     
     if unique_days > 0:
@@ -119,7 +121,10 @@ def calculate_global_channels(df: pd.DataFrame) -> Canais:
     """Calculate global channel distribution."""
     print("📊 Calculating global channel distribution...")
     
-    canal_counts = df['canal'].value_counts()
+    # Parse JSON payload column
+    df['parsed_payload'] = df['payload'].apply(lambda x: json.loads(x) if isinstance(x, str) else x)
+    
+    canal_counts = df['parsed_payload'].apply(lambda x: x.get("canal", "") if isinstance(x, dict) else "").value_counts()
     total = len(df)
     
     app_count = canal_counts.get('app', 0)
@@ -137,7 +142,10 @@ def calculate_global_products(df: pd.DataFrame) -> Produtos:
     """Calculate global product distribution."""
     print("📊 Calculating global product distribution...")
     
-    produto_counts = df['produto'].value_counts()
+    # Parse JSON payload column
+    df['parsed_payload'] = df['payload'].apply(lambda x: json.loads(x) if isinstance(x, str) else x)
+    
+    produto_counts = df['parsed_payload'].apply(lambda x: x.get("produto", "") if isinstance(x, dict) else "").value_counts()
     total = len(df)
     
     pix_count = produto_counts.get('pix', 0)
