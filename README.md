@@ -4,9 +4,44 @@ Sistema de detecção de fraude em tempo real para transações bancárias brasi
 
 ## Versão
 
-**Versão Atual**: 1.6.0
+**Versão Atual**: 1.7.0
 **Data de Lançamento**: 26/04/2026
 **Última Atualização**: 26/04/2026
+
+### Mudanças na Versão 1.7.0 (Sprint 2 - Stacking + Open Finance + Re-treino)
+
+**Novo Modelo: StackingFraudModel**
+- `src/stacking_model.py`: 3 base estimators + meta-learner LR + calibração isotônica
+- Level 0: XGBoost + LightGBM + CatBoost (3-fold CV para gerar meta-features)
+- Level 1: Logistic Regression como meta-learner
+- Threshold tuning automático global + canal + produto
+- SHAP via XGBoost da camada base
+
+**Open Finance Features**
+- `src/open_finance_features.py`: extrator de 9 features simuladas (determinístico)
+- Features: contas em outros bancos, score de crédito, estabilidade de renda, etc.
+- Pronto para substituição pela API real Open Finance mantendo interface
+
+**Re-treino Agendado (Concept Drift)**
+- `scripts/scheduled_retrain.py`: pipeline de re-treino com detecção de drift
+- Histórico em `logs/retrain_history.json`
+- Workflow `.github/workflows/scheduled-retrain.yml` (cron semanal segundas 03:00 UTC)
+- Detecta drift se AUC cair > 0.05 ou F1 cair > 0.10
+
+**Métricas (100k samples)**
+- Stacking AUC-ROC: 0.7832
+- F1-Score @ ótimo (0.2455): 0.2454
+- **Precision @ ótimo: 0.3175** (4× melhor que XGBoost solo: 0.0777)
+- Recall: 0.2000 (operação combinaria com revisão humana)
+
+**Critérios de Aceite QA**
+- ✅ Latência P95: 98ms (BACEN <200ms)
+- ✅ Latência P99: 110ms
+- ✅ 224 testes passando (era 211, +13)
+- ✅ SHAP explainability mantida
+
+**Dependências**
+- Adicionado `catboost>=1.2.0` ao `requirements.txt`
 
 ### Mudanças na Versão 1.6.0 (Sprint 1 - Ensemble + Refactor Arquitetural)
 
@@ -845,6 +880,8 @@ anti-fraud-v3-wf/
 │   ├── base_model.py             # BaseFraudModel (ABC) - lógica compartilhada
 │   ├── model.py                  # Modelo XGBoost + SHAP
 │   ├── ensemble_model.py         # EnsembleFraudModel (XGBoost + LightGBM + Calibração)
+│   ├── stacking_model.py         # StackingFraudModel (XGB + LGB + CatBoost -> LR)
+│   ├── open_finance_features.py  # OpenFinanceFeatureExtractor (9 features)
 │   ├── repositories.py           # Repository Pattern (SQLite + JSON + Ensemble)
 │   ├── rule_engine/              # Interpretador de Regras
 │   │   ├── __init__.py
