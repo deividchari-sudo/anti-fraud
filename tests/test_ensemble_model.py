@@ -48,8 +48,9 @@ class TestEnsembleFraudModel:
         }
         df = pd.DataFrame(data)
         # Balanced labels (avoid SMOTE issues with very small minority)
-        df["fraudResult"] = ([0] * 320) + ([1] * 80)
-        np.random.shuffle(df["fraudResult"].values)
+        labels = np.array(([0] * 320) + ([1] * 80))
+        np.random.shuffle(labels)
+        df["fraudResult"] = labels
         df["payload"] = "{}"
         return df
 

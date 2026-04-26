@@ -6,7 +6,7 @@ import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import sqlite3
 
 import pandas as pd
@@ -228,7 +228,7 @@ class JSONUserProfileRepository(UserProfileRepository):
                 "profiles": {},
                 "metadata": {
                     "total_profiles": 0,
-                    "last_sync": datetime.utcnow().isoformat(),
+                    "last_sync": datetime.now(timezone.utc).isoformat(),
                     "version": "1.0.0"
                 }
             }
@@ -239,7 +239,7 @@ class JSONUserProfileRepository(UserProfileRepository):
             initial_data = {
                 "global_profile": None,
                 "metadata": {
-                    "last_updated": datetime.utcnow().isoformat(),
+                    "last_updated": datetime.now(timezone.utc).isoformat(),
                     "version": "1.0.0"
                 }
             }
@@ -273,14 +273,16 @@ class JSONUserProfileRepository(UserProfileRepository):
         data = self._load_json(self.profiles_file)
         
         # Convert profile to dict if it has dict() method
-        if hasattr(profile, 'dict'):
+        if hasattr(profile, 'model_dump'):
+            profile_dict = profile.model_dump()
+        elif hasattr(profile, 'dict'):
             profile_dict = profile.dict()
         else:
             profile_dict = profile
         
         data["profiles"][cpf] = profile_dict
         data["metadata"]["total_profiles"] = len(data["profiles"])
-        data["metadata"]["last_sync"] = datetime.utcnow().isoformat()
+        data["metadata"]["last_sync"] = datetime.now(timezone.utc).isoformat()
         
         self._save_json(self.profiles_file, data)
         
@@ -327,8 +329,8 @@ class JSONUserProfileRepository(UserProfileRepository):
         
         profile = UserProfile(
             cpf="GLOBAL",
-            created_at=datetime.utcnow(),
-            last_updated=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            last_updated=datetime.now(timezone.utc),
             transaction_count=0,
             is_cold_start=False,
             statistics=Statistics(**stats_data),
@@ -348,7 +350,7 @@ class JSONUserProfileRepository(UserProfileRepository):
         if cpf in data["profiles"]:
             del data["profiles"][cpf]
             data["metadata"]["total_profiles"] = len(data["profiles"])
-            data["metadata"]["last_sync"] = datetime.utcnow().isoformat()
+            data["metadata"]["last_sync"] = datetime.now(timezone.utc).isoformat()
             self._save_json(self.profiles_file, data)
             
             # Update cache
@@ -408,8 +410,10 @@ class SQLiteUserProfileRepository(UserProfileRepository):
     
     def save_profile(self, cpf: str, profile) -> None:
         """Save user profile to SQLite."""
-        # Convert profile to dict if it has dict() method
-        if hasattr(profile, 'dict'):
+        # Convert profile to dict if it has model_dump/dict() method
+        if hasattr(profile, 'model_dump'):
+            profile_dict = profile.model_dump()
+        elif hasattr(profile, 'dict'):
             profile_dict = profile.dict()
         else:
             profile_dict = profile
@@ -426,8 +430,8 @@ class SQLiteUserProfileRepository(UserProfileRepository):
         ''', (
             cpf,
             profile_json,
-            profile_dict.get('created_at', datetime.utcnow().isoformat()),
-            profile_dict.get('last_updated', datetime.utcnow().isoformat()),
+            profile_dict.get('created_at', datetime.now(timezone.utc).isoformat()),
+            profile_dict.get('last_updated', datetime.now(timezone.utc).isoformat()),
             profile_dict.get('transaction_count', 0)
         ))
         
@@ -484,8 +488,8 @@ class SQLiteUserProfileRepository(UserProfileRepository):
         
         profile = UserProfile(
             cpf="GLOBAL",
-            created_at=datetime.utcnow(),
-            last_updated=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
+            last_updated=datetime.now(timezone.utc),
             transaction_count=0,
             is_cold_start=False,
             statistics=Statistics(**stats_data),

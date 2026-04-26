@@ -3,7 +3,7 @@ User Profile Service for Behavioral Profiling.
 Calculates and manages user behavioral profiles from transaction history.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional, Any
 import numpy as np
 from collections import Counter, defaultdict
@@ -272,7 +272,7 @@ class UserProfileService:
         # Calculate products
         produtos = self._calculate_produtos(transactions)
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         # Extract temporal features
         temporal_features = self.temporal_extractor.extract_all_temporal_features(transactions)
@@ -485,8 +485,8 @@ class UserProfileService:
             if global_profile:
                 profile = UserProfile(
                     cpf=hashed_cpf,  # Use hashed CPF
-                    created_at=datetime.utcnow(),
-                    last_updated=datetime.utcnow(),
+                    created_at=datetime.now(timezone.utc),
+                    last_updated=datetime.now(timezone.utc),
                     transaction_count=0,
                     is_cold_start=True,
                     statistics=global_profile.statistics,
@@ -502,7 +502,7 @@ class UserProfileService:
     
     def _create_minimal_profile(self, cpf: str) -> UserProfile:
         """Create minimal profile when no global profile exists."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         return UserProfile(
             cpf=cpf,
@@ -556,7 +556,7 @@ class UserProfileService:
         else:
             # Incremental update (simplified - in production would use more sophisticated methods)
             profile.transaction_count += 1
-            profile.last_updated = datetime.utcnow()
+            profile.last_updated = datetime.now(timezone.utc)
             
             # Update cold start status
             if profile.transaction_count >= self.MIN_TRANSACTIONS_FOR_PROFILE:
