@@ -29,6 +29,7 @@ from ..crypto import get_cpf_hasher
 from .temporal_features import TemporalFeatureExtractor
 from .clustering import UserClusterer
 from .isolation_forest import MultivariateAnomalyDetector
+from .online_learning import AdaptiveUserProfile
 
 
 class UserProfileService:
@@ -49,6 +50,7 @@ class UserProfileService:
         self.temporal_extractor = TemporalFeatureExtractor()
         self.clusterer = UserClusterer(n_clusters=5)
         self.multivariate_detector = MultivariateAnomalyDetector(contamination=0.1)
+        self.adaptive_profiles = {}  # In-memory adaptive profiles
     
     def _hash_cpf(self, cpf: str) -> str:
         """Hash CPF for storage (LGPD compliance)."""
@@ -140,6 +142,49 @@ class UserProfileService:
         """
         profile_dict = profile.dict() if profile else None
         return self.multivariate_detector.predict(transaction, profile_dict)
+    
+    def get_or_create_adaptive_profile(self, cpf: str) -> AdaptiveUserProfile:
+        """
+        Get or create adaptive user profile.
+        
+        Args:
+            cpf: User CPF
+            
+        Returns:
+            AdaptiveUserProfile instance
+        """
+        if cpf not in self.adaptive_profiles:
+            self.adaptive_profiles[cpf] = AdaptiveUserProfile(cpf)
+        return self.adaptive_profiles[cpf]
+    
+    def update_adaptive_profile(self, cpf: str, transaction: dict, 
+                               anomaly_score: float, 
+                               is_true_anomaly: Optional[bool] = None):
+        """
+        Update adaptive profile with new transaction.
+        
+        Args:
+            cpf: User CPF
+            transaction: Transaction dictionary
+            anomaly_score: Anomaly score for this transaction
+            is_true_anomaly: True if this was actually an anomaly (feedback)
+        """
+        adaptive_profile = self.get_or_create_adaptive_profile(cpf)
+        adaptive_profile.update(transaction, anomaly_score, is_true_anomaly)
+    
+    def detect_adaptive_anomaly(self, cpf: str, transaction: dict) -> Dict:
+        """
+        Detect anomaly using adaptive online learning.
+        
+        Args:
+            cpf: User CPF
+            transaction: Transaction dictionary
+            
+        Returns:
+            Dictionary with anomaly detection result
+        """
+        adaptive_profile = self.get_or_create_adaptive_profile(cpf)
+        return adaptive_profile.detect_anomaly(transaction)
     
     def calculate_profile(self, transactions: List[dict], cpf: str) -> UserProfile:
         """
