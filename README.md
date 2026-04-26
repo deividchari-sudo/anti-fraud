@@ -4,9 +4,26 @@ Sistema de detecção de fraude em tempo real para transações bancárias brasi
 
 ## Versão
 
-**Versão Atual**: 1.3.0  
+**Versão Atual**: 1.4.0  
 **Data de Lançamento**: 25/04/2026  
 **Última Atualização**: 25/04/2026
+
+### Mudanças na Versão 1.4.0 (Melhorias Especialista de Dados)
+
+**Melhorias de Clustering**
+- Adicionado DBSCAN como alternativa ao K-means (detecta outliers automaticamente)
+- Implementado silhouette score para validação de clustering
+- Aumentado número de clusters de 5 para 10 para melhor segmentação
+
+**Melhorias no Isolation Forest**
+- Implementado auto-contamination (encontra contamination ótimo automaticamente)
+- Adicionado EnsembleIsolationForest com 5 modelos e voting
+- Melhorado cálculo de feature importance usando árvores subjacentes
+
+**Configurações Atualizadas**
+- UserProfileService usa 10 clusters por padrão
+- Isolation Forest com auto_contamination=True
+- Silhouette score calculado automaticamente para validação
 
 ### Mudanças na Versão 1.3.0 (Behavioral Profiling V2)
 
