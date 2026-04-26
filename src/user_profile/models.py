@@ -110,6 +110,7 @@ class UserProfile(BaseModel):
     canais: Canais
     produtos: Produtos
     temporal_features: Optional[Dict] = Field(default_factory=dict)
+    cluster_id: Optional[int] = None
 
 
 class AnomalyDetail(BaseModel):

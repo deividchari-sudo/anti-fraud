@@ -27,6 +27,7 @@ from .anomaly_detector import AnomalyDetector
 from ..repositories import UserProfileRepository
 from ..crypto import get_cpf_hasher
 from .temporal_features import TemporalFeatureExtractor
+from .clustering import UserClusterer
 
 
 class UserProfileService:
@@ -45,10 +46,56 @@ class UserProfileService:
         self.anomaly_detector = AnomalyDetector()
         self.cpf_hasher = get_cpf_hasher()
         self.temporal_extractor = TemporalFeatureExtractor()
+        self.clusterer = UserClusterer(n_clusters=5)
     
     def _hash_cpf(self, cpf: str) -> str:
         """Hash CPF for storage (LGPD compliance)."""
         return self.cpf_hasher.hash_cpf(cpf)
+    
+    def train_clustering(self) -> Dict:
+        """
+        Train clustering model on all existing profiles.
+        
+        Returns:
+            Dictionary with clustering information
+        """
+        # Get all profiles
+        all_profiles = self.repository.list_all_profiles()
+        
+        if not all_profiles:
+            return {"error": "No profiles available for clustering"}
+        
+        # Convert to list of dicts
+        profile_list = list(all_profiles.values())
+        
+        # Train clustering
+        clustering_info = self.clusterer.fit(profile_list)
+        
+        # Update profiles with cluster labels
+        for cpf, profile_data in all_profiles.items():
+            cluster_label = self.clusterer.predict(profile_data)
+            # Update profile with cluster_id
+            profile_data["cluster_id"] = cluster_label
+            self.repository.save_profile(cpf, profile_data)
+        
+        return clustering_info
+    
+    def assign_cluster(self, profile: UserProfile) -> int:
+        """
+        Assign cluster to a user profile.
+        
+        Args:
+            profile: UserProfile object
+            
+        Returns:
+            Cluster ID
+        """
+        if not self.clusterer.is_fitted:
+            return 0
+        
+        profile_dict = profile.dict()
+        cluster_id = self.clusterer.predict(profile_dict)
+        return cluster_id
     
     def calculate_profile(self, transactions: List[dict], cpf: str) -> UserProfile:
         """
@@ -105,7 +152,7 @@ class UserProfileService:
         # Extract temporal features
         temporal_features = self.temporal_extractor.extract_all_temporal_features(transactions)
         
-        return UserProfile(
+        profile = UserProfile(
             cpf=hashed_cpf,  # Store hashed CPF
             created_at=now,
             last_updated=now,
@@ -121,6 +168,12 @@ class UserProfileService:
             produtos=produtos,
             temporal_features=temporal_features
         )
+        
+        # Assign cluster if clustering model is fitted
+        if self.clusterer.is_fitted:
+            profile.cluster_id = self.assign_cluster(profile)
+        
+        return profile
     
     def _calculate_value_statistics(self, valores: List[float]) -> ValueStatistics:
         """Calculate statistical measures for transaction values."""
