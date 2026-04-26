@@ -142,6 +142,46 @@ class JoblibEnsembleModelRepository(EnsembleModelRepository):
         return Path(self.bundle_path).exists()
 
 
+class AnomalyModelRepository(ABC):
+    """Abstract repository for anomaly detection model persistence (Sprint 3)."""
+
+    @abstractmethod
+    def load_bundle(self) -> dict:
+        """Load anomaly detector bundle."""
+        pass
+
+    @abstractmethod
+    def save_bundle(self, bundle: dict) -> None:
+        """Save anomaly detector bundle."""
+        pass
+
+    @abstractmethod
+    def exists(self) -> bool:
+        """Check if a saved bundle exists."""
+        pass
+
+
+class JoblibAnomalyModelRepository(AnomalyModelRepository):
+    """Joblib-based anomaly model repository (Sprint 3)."""
+
+    def __init__(self, bundle_path: str):
+        self.bundle_path = bundle_path
+
+    def load_bundle(self) -> dict:
+        import joblib
+
+        return joblib.load(self.bundle_path)
+
+    def save_bundle(self, bundle: dict) -> None:
+        import joblib
+
+        Path(self.bundle_path).parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(bundle, self.bundle_path)
+
+    def exists(self) -> bool:
+        return Path(self.bundle_path).exists()
+
+
 class UserProfileRepository(ABC):
     """Abstract repository for user profile data access."""
 

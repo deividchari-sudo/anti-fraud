@@ -9,14 +9,19 @@ Uses MLPRegressor (sklearn) as a proxy for AutoEncoder:
 This approach is used by Itaú and Bradesco in production for emerging fraud schemas.
 """
 
+import logging
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
+
+from src.repositories import (
+    AnomalyModelRepository,
+    JoblibAnomalyModelRepository,
+)
 
 
 class AutoEncoderAnomalyDetector:
@@ -29,6 +34,7 @@ class AutoEncoderAnomalyDetector:
         random_state: int = 42,
         anomaly_percentile: float = 95.0,
         model_path: Optional[str] = None,
+        repository: Optional[AnomalyModelRepository] = None,
     ):
         """
         Initialize AutoEncoder anomaly detector.
@@ -38,7 +44,8 @@ class AutoEncoderAnomalyDetector:
             max_iter: Max training iterations
             random_state: Random seed
             anomaly_percentile: Percentile of reconstruction error used as anomaly threshold
-            model_path: Path to save/load model bundle
+            model_path: Path to save/load model bundle (used if repository not given)
+            repository: Optional injected AnomalyModelRepository (DI)
         """
         self.hidden_dims = hidden_dims
         self.max_iter = max_iter
@@ -50,6 +57,27 @@ class AutoEncoderAnomalyDetector:
         self.autoencoder: Optional[MLPRegressor] = None
         self.threshold: float = 0.0
         self.is_fitted = False
+
+        # Dependency Injection for persistence
+        self.repository = repository or JoblibAnomalyModelRepository(self.model_path)
+
+        # Audit logger (BACEN compliance)
+        self.logger = logging.getLogger("fraud_audit_autoencoder")
+        self.logger.setLevel(logging.INFO)
+        Path("logs").mkdir(exist_ok=True)
+        if not any(
+            isinstance(h, logging.FileHandler)
+            and getattr(h, "baseFilename", "").endswith("audit.log")
+            for h in self.logger.handlers
+        ):
+            handler = logging.FileHandler("logs/audit.log")
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                )
+            )
+            self.logger.addHandler(handler)
 
     def fit(self, X_legitimate: pd.DataFrame) -> dict:
         """Fit the autoencoder on LEGITIMATE transactions only.
@@ -122,7 +150,7 @@ class AutoEncoderAnomalyDetector:
         # Normalize score to [0, 1] using ratio against threshold
         normalized = min(1.0, score / (self.threshold * 2 + 1e-9))
 
-        return {
+        result = {
             "anomaly_score": float(normalized),
             "raw_reconstruction_error": float(score),
             "is_zero_day_anomaly": bool(is_anomaly),
@@ -130,26 +158,32 @@ class AutoEncoderAnomalyDetector:
             "model_fitted": True,
         }
 
+        # Audit log if zero-day fraud suspected (BACEN)
+        if is_anomaly:
+            self.logger.info(
+                f"ZERO-DAY ANOMALY DETECTED: score={normalized:.4f}, "
+                f"raw_error={score:.6f}, threshold={self.threshold:.6f}"
+            )
+
+        return result
+
     def save(self) -> None:
-        """Persist autoencoder bundle to disk."""
-        Path(self.model_path).parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(
-            {
-                "autoencoder": self.autoencoder,
-                "scaler": self.scaler,
-                "threshold": self.threshold,
-                "anomaly_percentile": self.anomaly_percentile,
-                "hidden_dims": self.hidden_dims,
-                "is_fitted": self.is_fitted,
-            },
-            self.model_path,
-        )
+        """Persist autoencoder bundle via injected repository."""
+        bundle = {
+            "autoencoder": self.autoencoder,
+            "scaler": self.scaler,
+            "threshold": self.threshold,
+            "anomaly_percentile": self.anomaly_percentile,
+            "hidden_dims": self.hidden_dims,
+            "is_fitted": self.is_fitted,
+        }
+        self.repository.save_bundle(bundle)
 
     def load(self) -> None:
-        """Load autoencoder bundle from disk."""
-        if not Path(self.model_path).exists():
+        """Load autoencoder bundle via injected repository."""
+        if not self.repository.exists():
             raise FileNotFoundError(self.model_path)
-        bundle = joblib.load(self.model_path)
+        bundle = self.repository.load_bundle()
         self.autoencoder = bundle["autoencoder"]
         self.scaler = bundle["scaler"]
         self.threshold = bundle["threshold"]
