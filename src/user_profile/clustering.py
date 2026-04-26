@@ -24,7 +24,7 @@ class UserClusterer:
         self.n_clusters = n_clusters
         self.clustering_method = clustering_method
         self.kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        self.dbscan = DBSCAN(eps=0.5, min_samples=5, metric='euclidean')
+        self.dbscan = DBSCAN(eps=1.5, min_samples=3, metric='euclidean')
         self.scaler = StandardScaler()
         self.is_fitted = False
         self.silhouette_score = None
