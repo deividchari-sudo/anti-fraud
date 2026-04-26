@@ -17,8 +17,42 @@ from src.crypto import get_cpf_hasher
 
 app = FastAPI(
     title="Fraud Detection API",
-    description="API para detecção de fraude em tempo real para transações bancárias",
-    version="1.0.0",
+    description="""API para detecção de fraude em tempo real para transações bancárias brasileiras (PIX, TED, Boleto, Autenticação).
+
+## Funcionalidades
+
+### Detecção de Fraude
+- Modelo XGBoost com 71 features
+- SHAP explainer para explicabilidade
+- Rule Engine em linguagem natural (português)
+
+### Behavioral Profiling (v1.3.0)
+- Perfis comportamentais de usuários
+- Detecção de anomalias baseada em histórico
+- Features temporais (janelas deslizantes)
+- Clustering de usuários
+- Isolation Forest para outliers multivariados
+- Aprendizado online adaptativo
+- Features de grafo para rede de conexões
+
+### Conformidade LGPD
+- Hashing de CPFs com SHA-256 + salt
+- CPFs não armazenados em plaintext
+
+## Fluxo de Detecção
+
+1. **Avaliação de Regras**: Regras em linguagem natural são avaliadas primeiro
+2. **Predição ML**: Se nenhuma regra der match, o modelo ML é executado
+3. **Behavioral Profiling**: Análise comportamental é executada em paralelo
+4. **Feedback**: Analistas podem fornecer feedback para refinamento
+
+## Latência
+- Latência total: ~28ms por transação
+- Behavioral profiling: ~2ms
+- Regras: ~5ms
+- Modelo ML: ~13ms
+""",
+    version="1.3.0",
 )
 
 # CORS middleware
@@ -62,15 +96,57 @@ except Exception as e:
     print("Please train the model first using train_model.py")
 
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check():
-    """Health check endpoint."""
-    return HealthResponse(status="healthy", model_loaded=model_loaded, version="1.0.0")
+    """Verifica o status da API e do modelo carregado.
+    
+    Returns:
+        HealthResponse: Status da API, status do modelo e versão
+    
+    Example:
+        >>> GET /health
+        >>> {"status": "healthy", "model_loaded": true, "version": "1.3.0"}
+    """
+    return HealthResponse(status="healthy", model_loaded=model_loaded, version="1.3.0")
 
 
-@app.post("/predict", response_model=FraudPrediction)
+@app.post("/predict", response_model=FraudPrediction, tags=["Prediction"])
 async def predict_fraud(request: TransactionRequest):
-    """Predict if a transaction is fraudulent with audit explanation."""
+    """Prediz se uma transação é fraudulenta com análise comportamental.
+    
+    ## Fluxo de Processamento:
+    1. **Avaliação de Regras**: Regras em linguagem natural são avaliadas primeiro
+       - Se regra der match como fraude: retorna imediatamente com probability=1.0
+       - Se regra der match como legítimo: retorna imediatamente com probability=0.0
+    2. **Predição ML**: Se nenhuma regra der match, o modelo XGBoost é executado
+       - Extrai 71 features da transação
+       - Calcula probabilidade de fraude
+       - Gera explicação SHAP se fraude detectada
+    3. **Behavioral Profiling**: Análise comportamental em paralelo
+       - Busca perfil do usuário (CPF hasheado para LGPD)
+       - Detecta anomalias baseadas em histórico
+       - Atualiza perfil com a nova transação
+    
+    ## Behavioral Profiling:
+    - **Cold Start**: Usuários com <30 transações são marcados como cold start
+    - **Anomalias Detectadas**:
+      - Valor fora do padrão habitual (z-score > 3)
+      - Horário fora do padrão habitual
+      - Novo destinatário (CPF/banco)
+      - Novo canal
+    - **Latência**: ~2ms adicionais
+    
+    Args:
+        request: TransactionRequest com payload da transação
+    
+    Returns:
+        FraudPrediction: Resultado da predição com análise comportamental
+    
+    Example:
+        >>> POST /predict
+        >>> {"payload": {"id": "tx-001", "canal": "pix", "valor": 1000.0, ...}}
+        >>> {"transaction_id": "tx-001", "fraud_probability": 0.0454, "is_fraud": false, ...}
+    """
     if not model_loaded:
         raise HTTPException(
             status_code=503, detail="Model not loaded. Please train the model first."
@@ -165,9 +241,26 @@ async def predict_fraud(request: TransactionRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/predict/batch")
+@app.post("/predict/batch", tags=["Prediction"])
 async def predict_fraud_batch(requests: list[TransactionRequest]):
-    """Predict fraud for multiple transactions (batch processing)."""
+    """Prediz fraude para múltiplas transações (processamento em lote).
+    
+    ## Notas:
+    - Não inclui análise de regras (apenas predição ML)
+    - Não inclui behavioral profiling (para performance)
+    - Latência média: ~22ms por transação
+    
+    Args:
+        requests: Lista de TransactionRequest
+    
+    Returns:
+        Dict com resultados, tempo de processamento e média por transação
+    
+    Example:
+        >>> POST /predict/batch
+        >>> {"transactions": [{"payload": {...}}, {"payload": {...}}]}
+        >>> {"results": [...], "total_transactions": 2, "processing_time_ms": 45.12}
+    """
     if not model_loaded:
         raise HTTPException(
             status_code=503, detail="Model not loaded. Please train the model first."
@@ -216,9 +309,17 @@ async def predict_fraud_batch(requests: list[TransactionRequest]):
         )
 
 
-@app.get("/model/info")
+@app.get("/model/info", tags=["Model"])
 async def model_info():
-    """Get information about the loaded model."""
+    """Obtém informações sobre o modelo carregado.
+    
+    Returns:
+        Dict com tipo de modelo, número de features, threshold e top features
+    
+    Example:
+        >>> GET /model/info
+        >>> {"model_type": "XGBoost", "feature_count": 71, "threshold": 0.5, ...}
+    """
     if not model_loaded:
         raise HTTPException(status_code=503, detail="Model not loaded.")
 
@@ -249,9 +350,28 @@ class RuleCreateRequest(BaseModel):
 # Rule Management Endpoints
 
 
-@app.post("/rules")
+@app.post("/rules", tags=["Rules"])
 async def create_rule(request: RuleCreateRequest):
-    """Create a new rule from natural language text."""
+    """Cria uma nova regra a partir de texto em linguagem natural (português).
+    
+    ## Sintaxe Suportada:
+    - **CPF**: "Todo pix do CPF 12345678901 é fraude"
+    - **Valor**: "Todos os pix com valor superior a 1000 reais é fraude"
+    - **Horário**: "Todos os pix depois das 22:00 é fraude"
+    - **Canal**: "Todos os pix do app é fraude"
+    - **Banco**: "Bloquear todas as transacoes do banco 001"
+    - **Combinações**: "Todo pix do CPF 12345678901 com valor superior a 1000 reais depois das 22:00 é fraude"
+    
+    Args:
+        request: RuleCreateRequest com texto da regra, nome e descrição
+    
+    Returns:
+        Dict com ID da regra e detalhes da regra criada
+    
+    Example:
+        >>> POST /rules
+        >>> {"rule_text": "Todo pix do CPF 12345678901 é fraude", "name": "Regra CPF"}
+    """
     try:
         rule = rule_parser.parse(request.rule_text, request.name, request.description)
         rule_evaluator.add_rule(rule)
@@ -270,9 +390,17 @@ async def create_rule(request: RuleCreateRequest):
         raise HTTPException(status_code=400, detail=f"Error parsing rule: {str(e)}")
 
 
-@app.get("/rules")
+@app.get("/rules", tags=["Rules"])
 async def list_rules():
-    """List all rules."""
+    """Lista todas as regras cadastradas.
+    
+    Returns:
+        Dict com total de regras e lista de regras
+    
+    Example:
+        >>> GET /rules
+        >>> {"total_rules": 5, "rules": [...]}
+    """
     rules = rule_evaluator.get_all_rules()
 
     return {
@@ -293,9 +421,20 @@ async def list_rules():
     }
 
 
-@app.get("/rules/{rule_id}")
+@app.get("/rules/{rule_id}", tags=["Rules"])
 async def get_rule(rule_id: str):
-    """Get a specific rule by ID."""
+    """Obtém uma regra específica pelo ID.
+    
+    Args:
+        rule_id: ID da regra
+    
+    Returns:
+        Dict com detalhes completos da regra
+    
+    Example:
+        >>> GET /rules/rule_1
+        >>> {"rule_id": "rule_1", "name": "Regra CPF", ...}
+    """
     rule = rule_evaluator.get_rule(rule_id)
 
     if not rule:
@@ -320,9 +459,20 @@ async def get_rule(rule_id: str):
     }
 
 
-@app.delete("/rules/{rule_id}")
+@app.delete("/rules/{rule_id}", tags=["Rules"])
 async def delete_rule(rule_id: str):
-    """Delete a rule by ID."""
+    """Deleta uma regra pelo ID.
+    
+    Args:
+        rule_id: ID da regra
+    
+    Returns:
+        Mensagem de sucesso
+    
+    Example:
+        >>> DELETE /rules/rule_1
+        >>> {"message": "Rule deleted successfully"}
+    """
     success = rule_evaluator.remove_rule(rule_id)
 
     if not success:
@@ -331,9 +481,20 @@ async def delete_rule(rule_id: str):
     return {"message": "Rule deleted successfully"}
 
 
-@app.post("/rules/{rule_id}/enable")
+@app.post("/rules/{rule_id}/enable", tags=["Rules"])
 async def enable_rule(rule_id: str):
-    """Enable a rule by ID."""
+    """Habilita uma regra pelo ID.
+    
+    Args:
+        rule_id: ID da regra
+    
+    Returns:
+        Mensagem de sucesso
+    
+    Example:
+        >>> POST /rules/rule_1/enable
+        >>> {"message": "Rule enabled successfully"}
+    """
     rule = rule_evaluator.get_rule(rule_id)
 
     if not rule:
@@ -344,9 +505,20 @@ async def enable_rule(rule_id: str):
     return {"message": "Rule enabled successfully"}
 
 
-@app.post("/rules/{rule_id}/disable")
+@app.post("/rules/{rule_id}/disable", tags=["Rules"])
 async def disable_rule(rule_id: str):
-    """Disable a rule by ID."""
+    """Desabilita uma regra pelo ID.
+    
+    Args:
+        rule_id: ID da regra
+    
+    Returns:
+        Mensagem de sucesso
+    
+    Example:
+        >>> POST /rules/rule_1/disable
+        >>> {"message": "Rule disabled successfully"}
+    """
     rule = rule_evaluator.get_rule(rule_id)
 
     if not rule:
@@ -357,9 +529,21 @@ async def disable_rule(rule_id: str):
     return {"message": "Rule disabled successfully"}
 
 
-@app.post("/rules/evaluate")
+@app.post("/rules/evaluate", tags=["Rules"])
 async def evaluate_rules(transaction: dict):
-    """Evaluate a transaction against all rules."""
+    """Avalia uma transação contra todas as regras.
+    
+    Args:
+        transaction: Dict com payload da transação
+    
+    Returns:
+        Dict com resultado da avaliação (is_fraud_by_rules, is_legitimate_by_rules, matched_rules)
+    
+    Example:
+        >>> POST /rules/evaluate
+        >>> {"payload": {"cpfSender": "12345678901", ...}}
+        >>> {"is_fraud_by_rules": true, "matched_rules": ["rule_1"]}
+    """
     result = rule_evaluator.evaluate(transaction)
     return result
 
@@ -367,9 +551,30 @@ async def evaluate_rules(transaction: dict):
 # Behavioral Profiling Endpoints
 
 
-@app.get("/profile/{cpf}")
+@app.get("/profile/{cpf}", tags=["Behavioral Profiling"])
 async def get_user_profile(cpf: str):
-    """Get user behavioral profile (CPF will be hashed for lookup)."""
+    """Obtém o perfil comportamental do usuário.
+    
+    ## Notas Importantes:
+    - **Conformidade LGPD**: O CPF é hasheado com SHA-256 + salt antes de ser armazenado
+    - **Cold Start**: Usuários com <30 transações são marcados como cold start
+    - **Perfil Inclui**:
+      - Estatísticas de valor (média, desvio padrão, percentis)
+      - Padrões de horário (hora do dia, dia da semana)
+      - Distribuição de canais e produtos
+      - Features temporais (janelas deslizantes, tendências, sazonalidade)
+      - Cluster ID (segmentação comportamental)
+    
+    Args:
+        cpf: CPF do usuário (será hasheado para lookup)
+    
+    Returns:
+        UserProfile com estatísticas completas do perfil
+    
+    Example:
+        >>> GET /profile/12345678901
+        >>> {"cpf": "hashed_cpf", "transaction_count": 150, "statistics": {...}, ...}
+    """
     try:
         profile = user_profile_service.get_or_create_profile(cpf)
         return profile.dict()
@@ -386,9 +591,31 @@ class AnomalyFeedbackRequest(BaseModel):
     anomaly_type: Optional[str] = None
 
 
-@app.post("/feedback/anomaly")
+@app.post("/feedback/anomaly", tags=["Behavioral Profiling"])
 async def submit_anomaly_feedback(request: AnomalyFeedbackRequest):
-    """Submit feedback about anomaly detection from analysts (CPF will be hashed)."""
+    """Envia feedback de analista sobre detecção de anomalias.
+    
+    ## Propósito:
+    - Refinar o modelo de detecção de anomalias com feedback humano
+    - Treinar o aprendizado online para adaptação contínua
+    - Melhorar a precisão ao longo do tempo
+    
+    ## Notas:
+    - **Conformidade LGPD**: O CPF é hasheado antes de ser armazenado
+    - O feedback é usado para ajustar o threshold adaptativo
+    - Analistas podem adicionar notas para contexto adicional
+    
+    Args:
+        request: AnomalyFeedbackRequest com ID da transação, CPF, feedback, etc.
+    
+    Returns:
+        Mensagem de confirmação com CPF hasheado
+    
+    Example:
+        >>> POST /feedback/anomaly
+        >>> {"transaction_id": "tx-001", "cpf": "12345678901", "is_true_anomaly": true, ...}
+        >>> {"status": "recorded", "cpf_hashed": true}
+    """
     try:
         # Hash CPF for storage
         cpf_hasher = get_cpf_hasher()
