@@ -331,15 +331,148 @@ Apenas AND lógico entre condições
 python -m pytest tests/test_rule_engine.py -v
 ```
 
-## Roadmap Futuro
+## V2 — Evolução do Interpretador (entregue)
 
-### Melhorias Planejadas
-1. Suporte a operadores lógicos (OR, NOT)
-2. Regras com múltiplas ações
-3. Integração com banco de dados persistente
-4. Interface web para criação de regras
-5. Sugestão de regras baseadas em padrões históricos
-6. Validação automática de regras antes de habilitar
+A versão V2 mantém **100% de retrocompatibilidade** com a V1 e adiciona:
+
+### 1. Persistência de regras
+
+Regras agora sobrevivem a reinícios. Persistência via padrão Repository
+(igual ao usado para modelos e perfis):
+
+- `RuleRepository` (interface abstrata)
+- `JSONRuleRepository` (default em `data/rules.json`, escrita atômica)
+- `InMemoryRuleRepository` (uso em testes / DI)
+
+```python
+from src.rule_engine import RuleEvaluator, JSONRuleRepository, RuleAuditLogger
+
+evaluator = RuleEvaluator(
+    repository=JSONRuleRepository("data/rules.json"),
+    audit_logger=RuleAuditLogger("logs/rule_audit.jsonl"),
+)
+```
+
+### 2. Operadores lógicos OR e NOT
+
+- **OR**: o conector `" ou "` no texto separa grupos. Cada grupo é AND
+  internamente; grupos são unidos por OR.
+- **NOT**: tokens `exceto` ou `não sendo` antes de uma condição marcam-na
+  como `negated=True` (resultado da comparação é invertido).
+
+```
+"Todo pix do app ou todo pix do web é fraude"
+"Todo pix exceto do CPF 12345678901 é fraude"
+```
+
+Modelo de dados:
+
+- `Rule.condition_groups: List[List[Condition]]` — quando preenchido tem
+  precedência sobre `conditions`. Quando vazio, fallback para `conditions`
+  (AND simples — comportamento V1 intacto).
+- `Condition.negated: bool = False`.
+
+### 3. Audit log BACEN
+
+Cada match registra um JSON-line em `logs/rule_audit.jsonl`:
+
+```json
+{"timestamp": "2026-04-26T18:25:00+00:00", "rule_id": "rule_3",
+ "rule_name": "Bloqueio CPF VIP", "transaction_id": "tx-99",
+ "action": "mark_as_fraud", "is_fraud": true,
+ "conditions_matched": 2, "priority": 5}
+```
+
+Append-only, imutável, ingerível por ELK/Splunk/BigQuery.
+
+### 4. Métricas operacionais por regra
+
+`RuleMetricsRegistry` mantém, por `rule_id`:
+
+- `hit_count` — número total de matches
+- `last_match_at` — ISO timestamp do último match
+- `false_positive_count`, `last_false_positive_at` — para feedback humano
+
+Endpoint: `GET /rules/metrics`.
+
+### 5. Detecção de conflitos
+
+`detect_conflicts(rules)` retorna pares de regras com **mesma assinatura
+de condições e ações opostas** (uma blacklist e uma whitelist contraditórias).
+
+Endpoint: `GET /rules/conflicts`.
+
+### 6. Dry-run / Simulação
+
+Antes de habilitar uma regra, valide o comportamento contra um lote de
+transações sem persistir nem auditar:
+
+```
+POST /rules/simulate
+{
+  "rule_texts": ["Todo pix do CPF 12345678901 é fraude"],
+  "transactions": [ { ... }, { ... } ]
+}
+```
+
+Retorna `flagged_fraud`, `flagged_legitimate`, `untouched`, `hits_by_rule`.
+
+### 7. Validação prévia
+
+Para feedback imediato de UX antes de criar uma regra:
+
+```
+POST /rules/validate
+{ "rule_text": "Todo pix do CPF 12345678901 é fraude" }
+```
+
+Retorna `valid`, `action`, `groups`, `warnings` — não persiste nada.
+
+### 8. Import / Export
+
+```
+GET  /rules/export                → JSON com todas as regras
+POST /rules/import {rules, replace?}  → cria ou substitui em lote
+```
+
+Habilita versionamento via Git, replicação entre ambientes e backup.
+
+### 9. PATCH parcial
+
+```
+PATCH /rules/{rule_id}
+{ "priority": 99, "enabled": false }
+```
+
+Campos editáveis: `enabled`, `priority`, `name`, `description`. Outros
+campos exigem deletar e recriar a regra para manter rastreabilidade.
+
+---
+
+### Tabela de endpoints V2
+
+| Método | Path | Descrição |
+|---|---|---|
+| POST | `/rules/validate` | Dry-parse, sem persistir |
+| POST | `/rules/simulate` | Dry-run em lote |
+| GET  | `/rules/conflicts` | Lista pares conflitantes |
+| GET  | `/rules/export` | Exporta catálogo (JSON) |
+| POST | `/rules/import` | Importa catálogo (JSON) |
+| GET  | `/rules/metrics` | Métricas por regra |
+| PATCH | `/rules/{rule_id}` | Atualiza campos editáveis |
+
+### Cobertura de testes V2
+
+- 25 testes novos em `tests/test_rule_engine_v2.py`
+- 148 testes legados (`tests/test_rule_engine.py` e `tests/test_rule_engine_comprehensive.py`) **continuam verdes**
+- Suite completa: **293 passed, 5 skipped, 0 errors**
+
+### Conformidade BACEN/LGPD V2
+
+- Audit log JSONL imutável e timestamped
+- Persistência atômica via `os.replace` (sem corrupção em crash)
+- Detecção automática de conflitos prevenindo decisões ambíguas
+- Métricas por regra permitem identificar regras zumbis e calibrar falsos positivos
 
 ## Suporte
 

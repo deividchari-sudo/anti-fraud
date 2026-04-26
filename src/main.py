@@ -11,7 +11,13 @@ from src.feature_engineering import FeatureEngineer
 from src.model import FraudDetectionModel
 from src.models import FraudPrediction, HealthResponse, TransactionRequest
 from src.repositories import JoblibModelRepository, SQLiteUserProfileRepository
-from src.rule_engine import RuleEvaluator, RuleParser
+from src.rule_engine import (
+    JSONRuleRepository,
+    RuleAuditLogger,
+    RuleEvaluator,
+    RuleParser,
+    detect_conflicts,
+)
 from src.user_profile import UserProfileService
 from src.crypto import get_cpf_hasher
 
@@ -67,9 +73,22 @@ app.add_middleware(
 # Global variables
 feature_engineer = FeatureEngineer()
 
-# Rule Engine - for natural language rules
+# Rule Engine - for natural language rules (V2)
 rule_parser = RuleParser()
-rule_evaluator = RuleEvaluator()
+rule_repository = JSONRuleRepository("data/rules.json")
+rule_audit_logger = RuleAuditLogger("logs/rule_audit.jsonl")
+rule_evaluator = RuleEvaluator(
+    repository=rule_repository,
+    audit_logger=rule_audit_logger,
+)
+# Keep parser id counter ahead of any persisted rule ids (rule_N format)
+for _r in rule_evaluator.get_all_rules():
+    try:
+        n = int(_r.id.split("_")[-1])
+        if n > rule_parser.rules_count:
+            rule_parser.rules_count = n
+    except (ValueError, IndexError):
+        continue
 
 # Dependency injection for model repository
 model_repository = JoblibModelRepository(
@@ -421,6 +440,28 @@ async def list_rules():
     }
 
 
+@app.get("/rules/conflicts", tags=["Rules"])
+async def list_rule_conflicts():
+    """Detecta pares de regras com condições idênticas e ações opostas."""
+    conflicts = detect_conflicts(rule_evaluator.get_all_rules())
+    return {"total_conflicts": len(conflicts), "conflicts": conflicts}
+
+
+@app.get("/rules/export", tags=["Rules"])
+async def export_rules():
+    """Exporta o catálogo de regras como JSON estruturado (portável)."""
+    from src.rule_engine import rule_to_dict
+
+    rules = rule_evaluator.get_all_rules()
+    return {"version": 2, "rules": [rule_to_dict(r) for r in rules]}
+
+
+@app.get("/rules/metrics", tags=["Rules"])
+async def get_rules_metrics():
+    """Retorna métricas operacionais por regra (hit_count, last_match_at)."""
+    return rule_evaluator.metrics.to_dict()
+
+
 @app.get("/rules/{rule_id}", tags=["Rules"])
 async def get_rule(rule_id: str):
     """Obtém uma regra específica pelo ID.
@@ -546,6 +587,90 @@ async def evaluate_rules(transaction: dict):
     """
     result = rule_evaluator.evaluate(transaction)
     return result
+
+
+# ----------------------------------------------------------------------
+# Rule Engine V2 endpoints
+# ----------------------------------------------------------------------
+
+
+class RuleValidateRequest(BaseModel):
+    rule_text: str
+
+
+class RuleSimulateRequest(BaseModel):
+    transactions: list
+    rule_texts: Optional[list] = None  # if None, simulate against persisted rules
+
+
+class RuleImportRequest(BaseModel):
+    rules: list  # list of dicts produced by /rules/export
+    replace: bool = False
+
+
+class RulePatchRequest(BaseModel):
+    enabled: Optional[bool] = None
+    priority: Optional[int] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+@app.post("/rules/validate", tags=["Rules"])
+async def validate_rule(request: RuleValidateRequest):
+    """Valida (dry-run) o texto de uma regra sem persistir.
+
+    Útil para que o usuário operacional veja como o parser interpretou o
+    texto antes de criar a regra de fato.
+    """
+    return rule_parser.validate(request.rule_text)
+
+
+@app.post("/rules/simulate", tags=["Rules"])
+async def simulate_rules(request: RuleSimulateRequest):
+    """Simula avaliação contra um lote de transações sem auditar/persistir.
+
+    Aceita ``rule_texts`` opcional para testar regras candidatas; quando
+    ausente, simula contra o catálogo persistido atual.
+    """
+    if request.rule_texts:
+        candidate_rules = [rule_parser.parse(t) for t in request.rule_texts]
+    else:
+        candidate_rules = None
+    return rule_evaluator.simulate(request.transactions, candidate_rules)
+
+
+@app.post("/rules/import", tags=["Rules"])
+async def import_rules(request: RuleImportRequest):
+    """Importa regras em lote a partir do formato de ``/rules/export``."""
+    from src.rule_engine import rule_from_dict
+
+    try:
+        imported = [rule_from_dict(r) for r in request.rules]
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid rule payload: {exc}")
+
+    if request.replace:
+        rule_evaluator.rules = imported
+        rule_evaluator._persist()  # type: ignore[attr-defined]
+    else:
+        rule_evaluator.add_rules(imported)
+    return {"imported": len(imported), "total_rules": len(rule_evaluator.get_all_rules())}
+
+
+@app.patch("/rules/{rule_id}", tags=["Rules"])
+async def patch_rule(rule_id: str, request: RulePatchRequest):
+    """Atualiza campos editáveis de uma regra (priority, enabled, name, description)."""
+    changes = {k: v for k, v in request.model_dump().items() if v is not None}
+    rule = rule_evaluator.update_rule(rule_id, **changes)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {
+        "rule_id": rule.id,
+        "name": rule.name,
+        "enabled": rule.enabled,
+        "priority": rule.priority,
+        "description": rule.description,
+    }
 
 
 # Behavioral Profiling Endpoints

@@ -2,7 +2,7 @@
 Rule data structures for fraud detection.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, List, Optional
 
@@ -42,14 +42,26 @@ class Operator(Enum):
 
 @dataclass
 class Condition:
-    """Single condition in a rule."""
+    """Single condition in a rule.
 
-    field: ConditionType
+    Attributes:
+        field: Which transaction field this condition applies to.
+        operator: Comparison operator.
+        value: Right-hand value to compare against.
+        negated: When True, the boolean result of the comparison is inverted (NOT).
+    """
+
+    field: "ConditionType"
     operator: Operator
     value: Any
+    negated: bool = False
 
     def evaluate(self, transaction: dict) -> bool:
         """Evaluate condition against transaction."""
+        result = self._evaluate_raw(transaction)
+        return (not result) if self.negated else result
+
+    def _evaluate_raw(self, transaction: dict) -> bool:
         field_value = self._get_field_value(transaction)
 
         if self.operator == Operator.EQUALS:
@@ -103,7 +115,13 @@ class Condition:
 
 @dataclass
 class Rule:
-    """Fraud detection rule."""
+    """Fraud detection rule.
+
+    Logical model (V2):
+        - ``conditions``: legacy AND-only list (kept for backward compatibility).
+        - ``condition_groups``: ``OR`` of groups, with ``AND`` inside each group.
+          When non-empty, takes precedence over ``conditions``.
+    """
 
     id: str
     name: str
@@ -113,13 +131,26 @@ class Rule:
     action: ActionType
     enabled: bool = True
     priority: int = 0
+    condition_groups: List[List[Condition]] = field(default_factory=list)
 
     def evaluate(self, transaction: dict) -> bool:
-        """Evaluate all conditions against transaction."""
+        """Evaluate rule against transaction.
+
+        Uses ``condition_groups`` (OR of AND-groups) when present, otherwise
+        falls back to ``conditions`` (single AND group).
+        """
         if not self.enabled:
             return False
 
-        # All conditions must be true (AND logic)
+        if self.condition_groups:
+            # OR across groups, AND within each group
+            return any(
+                all(c.evaluate(transaction) for c in group)
+                for group in self.condition_groups
+                if group
+            )
+
+        # Legacy AND-only path
         return all(condition.evaluate(transaction) for condition in self.conditions)
 
     def matches(self, transaction: dict) -> Optional[bool]:
@@ -127,3 +158,24 @@ class Rule:
         if self.evaluate(transaction):
             return self.action == ActionType.MARK_AS_FRAUD
         return None
+
+    def signature(self) -> str:
+        """Stable canonical signature of conditions for conflict detection.
+
+        Two rules with identical signatures and opposite actions are conflicting.
+        """
+        groups = self.condition_groups or [self.conditions]
+        norm_groups = []
+        for group in groups:
+            norm = sorted(
+                (
+                    c.field.value,
+                    c.operator.value,
+                    str(c.value),
+                    bool(c.negated),
+                )
+                for c in group
+            )
+            norm_groups.append(norm)
+        norm_groups.sort()
+        return repr(norm_groups)
