@@ -26,6 +26,7 @@ from .models import (
 from .anomaly_detector import AnomalyDetector
 from ..repositories import UserProfileRepository
 from ..crypto import get_cpf_hasher
+from .temporal_features import TemporalFeatureExtractor
 
 
 class UserProfileService:
@@ -43,6 +44,7 @@ class UserProfileService:
         self.repository = repository
         self.anomaly_detector = AnomalyDetector()
         self.cpf_hasher = get_cpf_hasher()
+        self.temporal_extractor = TemporalFeatureExtractor()
     
     def _hash_cpf(self, cpf: str) -> str:
         """Hash CPF for storage (LGPD compliance)."""
@@ -100,6 +102,9 @@ class UserProfileService:
         
         now = datetime.utcnow()
         
+        # Extract temporal features
+        temporal_features = self.temporal_extractor.extract_all_temporal_features(transactions)
+        
         return UserProfile(
             cpf=hashed_cpf,  # Store hashed CPF
             created_at=now,
@@ -113,7 +118,8 @@ class UserProfileService:
             ),
             destinations=destinations,
             canais=canais,
-            produtos=produtos
+            produtos=produtos,
+            temporal_features=temporal_features
         )
     
     def _calculate_value_statistics(self, valores: List[float]) -> ValueStatistics:

@@ -1,9 +1,9 @@
 """
-Pydantic models for User Profile and Behavioral Analysis.
+Pydantic models for Behavioral Profiling.
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Optional, Dict, List, Any
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -109,6 +109,7 @@ class UserProfile(BaseModel):
     destinations: Destinations = Field(default_factory=Destinations)
     canais: Canais
     produtos: Produtos
+    temporal_features: Optional[Dict] = Field(default_factory=dict)
 
 
 class AnomalyDetail(BaseModel):
