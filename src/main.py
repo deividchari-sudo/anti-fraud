@@ -10,7 +10,7 @@ from config import settings
 from src.feature_engineering import FeatureEngineer
 from src.model import FraudDetectionModel
 from src.models import FraudPrediction, HealthResponse, TransactionRequest
-from src.repositories import JoblibModelRepository, JSONUserProfileRepository
+from src.repositories import JoblibModelRepository, SQLiteUserProfileRepository
 from src.rule_engine import RuleEvaluator, RuleParser
 from src.user_profile import UserProfileService
 from src.crypto import get_cpf_hasher
@@ -48,7 +48,7 @@ model = FraudDetectionModel(
 model_loaded = False
 
 # Behavioral Profiling Service
-user_profile_repository = JSONUserProfileRepository()
+user_profile_repository = SQLiteUserProfileRepository()
 user_profile_service = UserProfileService(user_profile_repository)
 
 # Try to load model on startup

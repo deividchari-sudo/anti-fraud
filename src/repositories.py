@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
+import sqlite3
 
 import pandas as pd
 
@@ -163,12 +164,10 @@ class JSONUserProfileRepository(UserProfileRepository):
                 json.dump(initial_data, f, indent=2)
 
     def _load_cache(self):
-        """Load profiles into memory cache."""
-        try:
-            data = self._load_json(self.profiles_file)
-            self._profiles_cache = data.get("profiles", {})
-        except Exception:
-            self._profiles_cache = {}
+        """Load profiles into memory cache (lazy loading - don't load all at once)."""
+        # Don't load all profiles at startup - use lazy loading instead
+        # Cache will be populated on demand
+        self._profiles_cache = {}
         
         # Load global profile cache
         try:
@@ -281,3 +280,161 @@ class JSONUserProfileRepository(UserProfileRepository):
         """List all profiles."""
         data = self._load_json(self.profiles_file)
         return data["profiles"]
+
+
+class SQLiteUserProfileRepository(UserProfileRepository):
+    """SQLite-based implementation of user profile repository for better performance."""
+    
+    def __init__(self, db_file: str = "data/user_profiles.db", global_profile_file: str = "data/global_profile.json"):
+        self.db_file = Path(db_file)
+        self.global_profile_file = Path(global_profile_file)
+        self.global_profile_cache = None
+        self._ensure_db_exists()
+        self._load_global_profile_cache()
+    
+    def _ensure_db_exists(self):
+        """Ensure SQLite database exists with proper schema."""
+        self.db_file.parent.mkdir(exist_ok=True)
+        
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS profiles (
+                cpf TEXT PRIMARY KEY,
+                profile_json TEXT NOT NULL,
+                created_at TEXT,
+                last_updated TEXT,
+                transaction_count INTEGER
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_cpf ON profiles(cpf)
+        ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def _load_global_profile_cache(self):
+        """Load global profile into cache."""
+        try:
+            self.global_profile_cache = self.load_global_profile()
+        except Exception:
+            self.global_profile_cache = None
+    
+    def save_profile(self, cpf: str, profile) -> None:
+        """Save user profile to SQLite."""
+        # Convert profile to dict if it has dict() method
+        if hasattr(profile, 'dict'):
+            profile_dict = profile.dict()
+        else:
+            profile_dict = profile
+        
+        import json
+        profile_json = json.dumps(profile_dict, default=str)
+        
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO profiles (cpf, profile_json, created_at, last_updated, transaction_count)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            cpf,
+            profile_json,
+            profile_dict.get('created_at', datetime.utcnow().isoformat()),
+            profile_dict.get('last_updated', datetime.utcnow().isoformat()),
+            profile_dict.get('transaction_count', 0)
+        ))
+        
+        conn.commit()
+        conn.close()
+    
+    def load_profile(self, cpf: str) -> Optional:
+        """Load user profile from SQLite."""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT profile_json FROM profiles WHERE cpf = ?', (cpf,))
+        row = cursor.fetchone()
+        
+        conn.close()
+        
+        if row is None:
+            return None
+        
+        # Import here to avoid circular dependency
+        try:
+            from src.user_profile.models import UserProfile
+        except ImportError:
+            from user_profile.models import UserProfile
+        
+        profile_dict = json.loads(row[0])
+        return UserProfile(**profile_dict)
+    
+    def load_global_profile(self) -> Optional:
+        """Load global profile from JSON."""
+        if self.global_profile_cache is not None:
+            return self.global_profile_cache
+        
+        if not self.global_profile_file.exists():
+            return None
+        
+        with open(self.global_profile_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        global_profile_data = data.get("global_profile")
+        
+        if global_profile_data is None:
+            return None
+        
+        # Import here to avoid circular dependency
+        try:
+            from src.user_profile.models import UserProfile, Statistics, ValueStatistics, HourStatistics, FrequencyStatistics, Destinations, Canais, Produtos
+        except ImportError:
+            from user_profile.models import UserProfile, Statistics, ValueStatistics, HourStatistics, FrequencyStatistics, Destinations, Canais, Produtos
+        
+        stats_data = global_profile_data.get("statistics", {})
+        canais_data = global_profile_data.get("canais", {})
+        produtos_data = global_profile_data.get("produtos", {})
+        
+        profile = UserProfile(
+            cpf="GLOBAL",
+            created_at=datetime.utcnow(),
+            last_updated=datetime.utcnow(),
+            transaction_count=0,
+            is_cold_start=False,
+            statistics=Statistics(**stats_data),
+            destinations=Destinations(),
+            canais=Canais(**canais_data),
+            produtos=Produtos(**produtos_data)
+        )
+        
+        self.global_profile_cache = profile
+        return profile
+    
+    def delete_profile(self, cpf: str) -> bool:
+        """Delete user profile from SQLite."""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM profiles WHERE cpf = ?', (cpf,))
+        affected = cursor.rowcount
+        
+        conn.commit()
+        conn.close()
+        
+        return affected > 0
+    
+    def list_all_profiles(self) -> dict:
+        """List all profiles (returns dict of CPF -> profile)."""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT cpf, profile_json FROM profiles')
+        rows = cursor.fetchall()
+        
+        conn.close()
+        
+        return {row[0]: json.loads(row[1]) for row in rows}
