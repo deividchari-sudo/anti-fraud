@@ -4,9 +4,44 @@ Sistema de detecção de fraude em tempo real para transações bancárias brasi
 
 ## Versão
 
-**Versão Atual**: 1.5.0  
-**Data de Lançamento**: 25/04/2026  
-**Última Atualização**: 25/04/2026
+**Versão Atual**: 1.6.0
+**Data de Lançamento**: 26/04/2026
+**Última Atualização**: 26/04/2026
+
+### Mudanças na Versão 1.6.0 (Sprint 1 - Ensemble + Refactor Arquitetural)
+
+**Novos Modelos**
+- `EnsembleFraudModel` (`src/ensemble_model.py`): XGBoost + LightGBM com voting ponderado
+- Calibração isotônica de probabilidades via `CalibratedClassifierCV`
+- Threshold tuning automático: global + por canal (app/web/api) + por produto (pix/ted/boleto/autenticação)
+- Feature importance média ponderada dos dois base estimators
+
+**Refactor Arquitetural (Apontamentos do Arquiteto)**
+- `BaseFraudModel` (ABC) extraída em `src/base_model.py` — elimina duplicação
+  - Audit logging compartilhado (BACEN)
+  - Train/test split + SMOTE balancing reutilizáveis
+  - Feature alignment para predição
+  - Decision logging padronizado
+- `EnsembleModelRepository` (ABC) e `JoblibEnsembleModelRepository` em `src/repositories.py`
+  - Dependency Injection para persistência (testabilidade + storage flexível)
+  - Permite mocks in-memory para testes rápidos
+- `EnsembleFraudModel` agora herda de `BaseFraudModel` e aceita repositório injetado
+
+**Métricas (100k samples)**
+- Ensemble AUC-ROC: 0.8207 (XGB-only: 0.8141, LGB-only: 0.8113)
+- F1-Score @ threshold ótimo (0.1487): 0.2574
+- Precision @ threshold ótimo: **0.2775** (3.5× melhor que XGBoost solo: 0.0777)
+- Probabilidades calibradas (críticas para decisões de negócio)
+
+**Critérios de Aceite QA**
+- ✅ Latência P95 < 100ms (BACEN): 93ms
+- ✅ Latência P99 < 200ms: 125ms
+- ⚠️ Latência média: 75ms (tradeoff aceitável: 2 modelos + calibração)
+- ✅ 211 testes passando (era 209)
+- ✅ SHAP explainability mantida via XGBoost calibrado
+
+**Dependências**
+- Adicionado `lightgbm>=4.3.0` ao `requirements.txt`
 
 ### Mudanças na Versão 1.5.0 (Dataset Expandido para 100k)
 
@@ -807,8 +842,10 @@ anti-fraud-v3-wf/
 │   ├── models.py                 # Modelos Pydantic
 │   ├── crypto.py                 # Hashing de CPFs (LGPD)
 │   ├── feature_engineering.py    # Feature engineering
+│   ├── base_model.py             # BaseFraudModel (ABC) - lógica compartilhada
 │   ├── model.py                  # Modelo XGBoost + SHAP
-│   ├── repositories.py           # Repository Pattern (SQLite + JSON)
+│   ├── ensemble_model.py         # EnsembleFraudModel (XGBoost + LightGBM + Calibração)
+│   ├── repositories.py           # Repository Pattern (SQLite + JSON + Ensemble)
 │   ├── rule_engine/              # Interpretador de Regras
 │   │   ├── __init__.py
 │   │   ├── parser.py             # Parser de linguagem natural

@@ -5,6 +5,25 @@ import pandas as pd
 import pytest
 
 from src.ensemble_model import EnsembleFraudModel
+from src.repositories import EnsembleModelRepository, JoblibEnsembleModelRepository
+
+
+class InMemoryEnsembleRepository(EnsembleModelRepository):
+    """In-memory repository for fast testing (DI mock)."""
+
+    def __init__(self):
+        self._bundle = None
+
+    def load_bundle(self) -> dict:
+        if self._bundle is None:
+            raise FileNotFoundError("No bundle stored")
+        return self._bundle
+
+    def save_bundle(self, bundle: dict) -> None:
+        self._bundle = bundle
+
+    def exists(self) -> bool:
+        return self._bundle is not None
 
 
 class TestEnsembleFraudModel:
@@ -146,3 +165,37 @@ class TestEnsembleFraudModel:
         assert len(importance) == len(model.feature_names)
         # All importances are non-negative
         assert all(v >= 0 for v in importance.values())
+
+    def test_dependency_injection_with_in_memory_repository(self, sample_data):
+        """DI: train + load using an in-memory repository (no disk I/O)."""
+        repo = InMemoryEnsembleRepository()
+
+        # Train using injected repo
+        model = EnsembleFraudModel(repository=repo)
+        model.train(sample_data)
+        assert repo.exists()
+        assert repo.load_bundle()["xgb_model"] is not None
+
+        # New instance loads from same repo (simulates restart)
+        model2 = EnsembleFraudModel(repository=repo)
+        assert model2.feature_names == model.feature_names
+        assert model2.threshold == model.threshold
+
+    def test_joblib_ensemble_repository_roundtrip(self, sample_data, tmp_path):
+        """JoblibEnsembleModelRepository: persist and reload bundle on disk."""
+        bundle_path = str(tmp_path / "roundtrip.pkl")
+        repo = JoblibEnsembleModelRepository(bundle_path)
+        assert repo.exists() is False
+
+        model = EnsembleFraudModel(model_path=bundle_path, repository=repo)
+        model.train(sample_data)
+        assert repo.exists() is True
+
+        # Reload via fresh repository instance
+        repo2 = JoblibEnsembleModelRepository(bundle_path)
+        bundle = repo2.load_bundle()
+        assert "xgb_model" in bundle
+        assert "lgb_model" in bundle
+        assert "feature_names" in bundle
+        assert "thresholds_by_channel" in bundle
+        assert "thresholds_by_product" in bundle

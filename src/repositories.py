@@ -99,6 +99,49 @@ class JoblibModelRepository(ModelRepository):
             json.dump(feature_names, f)
 
 
+class EnsembleModelRepository(ABC):
+    """Abstract repository for ensemble model persistence."""
+
+    @abstractmethod
+    def load_bundle(self) -> dict:
+        """Load full ensemble bundle (models + thresholds + metadata)."""
+        pass
+
+    @abstractmethod
+    def save_bundle(self, bundle: dict) -> None:
+        """Save full ensemble bundle to disk."""
+        pass
+
+    @abstractmethod
+    def exists(self) -> bool:
+        """Check if a saved bundle exists."""
+        pass
+
+
+class JoblibEnsembleModelRepository(EnsembleModelRepository):
+    """Joblib-based implementation of ensemble model repository."""
+
+    def __init__(self, bundle_path: str):
+        self.bundle_path = bundle_path
+
+    def load_bundle(self) -> dict:
+        """Load ensemble bundle from disk."""
+        import joblib
+
+        return joblib.load(self.bundle_path)
+
+    def save_bundle(self, bundle: dict) -> None:
+        """Save ensemble bundle to disk."""
+        import joblib
+
+        Path(self.bundle_path).parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(bundle, self.bundle_path)
+
+    def exists(self) -> bool:
+        """Check if bundle file exists."""
+        return Path(self.bundle_path).exists()
+
+
 class UserProfileRepository(ABC):
     """Abstract repository for user profile data access."""
 

@@ -1,6 +1,6 @@
 """
-Ensemble Fraud Detection Model.
-Combines XGBoost + LightGBM with probability calibration and channel/product-specific thresholds.
+Ensemble Fraud Detection Model (refactored).
+Uses BaseFraudModel for shared logic and JoblibEnsembleModelRepository for persistence.
 
 Sprint 1 implementation (PM/Data Specialist roadmap):
 - LightGBM ensemble with XGBoost
@@ -8,19 +8,14 @@ Sprint 1 implementation (PM/Data Specialist roadmap):
 - Per-channel and per-product threshold tuning
 """
 
-import json
-import logging
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-import joblib
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import shap
 import xgboost as xgb
-from imblearn.over_sampling import SMOTE
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import (
     classification_report,
@@ -31,7 +26,12 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
+
+from src.base_model import DEFAULT_THRESHOLD, BaseFraudModel
+from src.repositories import (
+    EnsembleModelRepository,
+    JoblibEnsembleModelRepository,
+)
 
 # Channel feature columns (one-hot encoded in feature engineering)
 CHANNEL_FEATURES = ["canal_app", "canal_web", "canal_api"]
@@ -44,10 +44,8 @@ PRODUCT_FEATURES = [
     "produto_financeiro_generico",
 ]
 
-DEFAULT_THRESHOLD = 0.5
 
-
-class EnsembleFraudModel:
+class EnsembleFraudModel(BaseFraudModel):
     """Ensemble fraud detection model: XGBoost + LightGBM with calibration and per-channel thresholds."""
 
     def __init__(
@@ -55,53 +53,41 @@ class EnsembleFraudModel:
         model_path: Optional[str] = None,
         xgb_weight: float = 0.5,
         lgb_weight: float = 0.5,
+        repository: Optional[EnsembleModelRepository] = None,
     ):
         """
         Initialize ensemble fraud model.
 
         Args:
-            model_path: Path to save/load ensemble bundle
+            model_path: Path to save/load ensemble bundle (used if repository not given)
             xgb_weight: Weight for XGBoost predictions (0..1)
             lgb_weight: Weight for LightGBM predictions (0..1)
+            repository: Optional injected EnsembleModelRepository (DI for testing/storage)
         """
+        super().__init__(logger_name="fraud_audit_ensemble")
+
         if abs(xgb_weight + lgb_weight - 1.0) > 1e-6:
             raise ValueError("xgb_weight + lgb_weight must equal 1.0")
 
         self.xgb_model = None  # CalibratedClassifierCV wrapping XGBoost
         self.lgb_model = None  # CalibratedClassifierCV wrapping LightGBM
-        self.feature_names: list = []
         self.threshold = DEFAULT_THRESHOLD
         self.thresholds_by_channel: Dict[str, float] = {}
         self.thresholds_by_product: Dict[str, float] = {}
         self.xgb_weight = xgb_weight
         self.lgb_weight = lgb_weight
-        self.explainer = None  # SHAP explainer for XGBoost (used for explainability)
         self.model_path = model_path or "models/ensemble_fraud_model.pkl"
 
-        # Audit logger
-        self.logger = logging.getLogger("fraud_audit_ensemble")
-        self.logger.setLevel(logging.INFO)
-        Path("logs").mkdir(exist_ok=True)
-        if not any(
-            isinstance(h, logging.FileHandler)
-            and getattr(h, "baseFilename", "").endswith("audit.log")
-            for h in self.logger.handlers
-        ):
-            file_handler = logging.FileHandler("logs/audit.log")
-            file_handler.setLevel(logging.INFO)
-            file_handler.setFormatter(
-                logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-            )
-            self.logger.addHandler(file_handler)
+        # Dependency Injection for persistence
+        self.repository = repository or JoblibEnsembleModelRepository(self.model_path)
 
-        if Path(self.model_path).exists():
+        if self.repository.exists():
             self.load_model()
 
     # ---------------------------------------------------------------- training
 
     def train(self, df: pd.DataFrame, target_col: str = "fraudResult") -> dict:
-        """
-        Train ensemble model.
+        """Train ensemble model.
 
         Args:
             df: Training dataframe (with target and 'payload' columns)
@@ -112,32 +98,23 @@ class EnsembleFraudModel:
         """
         print(f"Training ensemble (XGBoost + LightGBM) with {len(df)} samples...")
 
-        X = df.drop(columns=[target_col, "payload"])
-        y = df[target_col]
+        # Use shared data prep from BaseFraudModel
+        (
+            X_train_resampled,
+            X_test_filled,
+            y_train_resampled,
+            y_test,
+            X_train_orig,
+            _,
+        ) = self.prepare_train_test(df, target_col=target_col, apply_smote=True)
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
-        )
-        print(f"Training set: {X_train.shape}, Test set: {X_test.shape}")
-
-        X_train_filled = X_train.fillna(0)
-        X_test_filled = X_test.fillna(0)
-
-        # SMOTE for class balancing
-        print("Applying SMOTE for class balancing...")
-        smote = SMOTE(random_state=42, k_neighbors=5)
-        X_train_resampled, y_train_resampled = smote.fit_resample(
-            X_train_filled, y_train
-        )
+        print(f"Training set: {X_train_orig.shape}, Test set: {X_test_filled.shape}")
         print(
             f"After SMOTE: {X_train_resampled.shape}, "
             f"fraud ratio: {y_train_resampled.mean():.4f}"
         )
 
-        scale_pos_weight = max(
-            (len(y_train_resampled) - sum(y_train_resampled)) / sum(y_train_resampled),
-            50,
-        )
+        scale_pos_weight = self.calculate_scale_pos_weight(y_train_resampled)
 
         # ---- Train XGBoost (base estimator) ----
         print("\nTraining XGBoost base estimator...")
@@ -184,7 +161,7 @@ class EnsembleFraudModel:
         self.lgb_model = CalibratedClassifierCV(lgb_base, method="isotonic", cv=3)
         self.lgb_model.fit(X_train_resampled, y_train_resampled)
 
-        self.feature_names = list(X_train.columns)
+        self.feature_names = list(X_train_orig.columns)
 
         # ---- Evaluate ensemble at default threshold ----
         print("\n--- Metrics @ default threshold (0.5) ---")
@@ -271,7 +248,6 @@ class EnsembleFraudModel:
         print(f"\n=== Threshold Optimization ===")
         print(f"Global optimal threshold (F1): {global_thr:.4f}")
 
-        # Use a balanced default; keep optimal for reference
         self.threshold = float(global_thr) if global_thr is not None else DEFAULT_THRESHOLD
 
         # Per-channel thresholds
@@ -327,16 +303,10 @@ class EnsembleFraudModel:
         if self.xgb_model is None or self.lgb_model is None:
             raise ValueError("Ensemble model not loaded. Train or load first.")
 
-        # Ensure all expected features exist
-        for col in self.feature_names:
-            if col not in features.columns:
-                features[col] = 0
-
-        X = features[self.feature_names].fillna(0)
+        # Use shared feature alignment from BaseFraudModel
+        X = self._align_features(features)
 
         fraud_probability = float(self._ensemble_proba(X)[0])
-
-        # Pick threshold for this transaction
         threshold_used = self._select_threshold(X.iloc[0])
         is_fraud = fraud_probability >= threshold_used
 
@@ -344,8 +314,14 @@ class EnsembleFraudModel:
         if is_fraud and self.explainer is not None:
             explanation = self._get_explanation(X, fraud_probability)
 
+        # Use shared decision logging from BaseFraudModel
         self._log_decision(
-            transaction_id, fraud_probability, is_fraud, threshold_used, explanation
+            transaction_id,
+            fraud_probability,
+            is_fraud,
+            threshold_used=threshold_used,
+            explanation=explanation,
+            model_name="ensemble_xgb_lgb",
         )
         return fraud_probability, is_fraud, explanation
 
@@ -404,33 +380,10 @@ class EnsembleFraudModel:
             parts.append(f"Indicadores legítimos: {', '.join(negatives)}")
         return ". ".join(parts)
 
-    def _log_decision(
-        self,
-        transaction_id: Optional[str],
-        proba: float,
-        is_fraud: bool,
-        threshold_used: float,
-        explanation: Optional[Dict[str, Any]],
-    ):
-        log_entry = {
-            "transaction_id": transaction_id or "unknown",
-            "timestamp": datetime.now().isoformat(),
-            "fraud_probability": proba,
-            "is_fraud": is_fraud,
-            "threshold_used": threshold_used,
-            "model": "ensemble_xgb_lgb",
-            "explanation": explanation,
-        }
-        if is_fraud:
-            self.logger.info(f"FRAUD DETECTED (ENSEMBLE): {json.dumps(log_entry)}")
-        else:
-            self.logger.debug(f"LEGITIMATE (ENSEMBLE): {json.dumps(log_entry)}")
-
     # -------------------------------------------------------- persistence I/O
 
     def save_model(self):
-        """Save full ensemble bundle to disk."""
-        Path(self.model_path).parent.mkdir(parents=True, exist_ok=True)
+        """Save full ensemble bundle via injected repository."""
         bundle = {
             "xgb_model": self.xgb_model,
             "lgb_model": self.lgb_model,
@@ -441,12 +394,12 @@ class EnsembleFraudModel:
             "xgb_weight": self.xgb_weight,
             "lgb_weight": self.lgb_weight,
         }
-        joblib.dump(bundle, self.model_path)
+        self.repository.save_bundle(bundle)
         print(f"Ensemble model saved to {self.model_path}")
 
     def load_model(self):
-        """Load ensemble bundle from disk."""
-        bundle = joblib.load(self.model_path)
+        """Load ensemble bundle via injected repository."""
+        bundle = self.repository.load_bundle()
         self.xgb_model = bundle["xgb_model"]
         self.lgb_model = bundle["lgb_model"]
         self.feature_names = bundle["feature_names"]
