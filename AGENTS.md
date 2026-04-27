@@ -37,6 +37,7 @@ O projeto possui 7 workflows no padrão Windsurf para orquestrar a squad. Digite
 
 | Workflow | Comando | Quem lidera | Quando usar |
 |---|---|---|---|
+| squad-orchestrate.md | `/squad-orchestrate` | Lead Orchestrator (Cascade) | **Ponto de entrada** — descreva a tarefa e a squad decide sozinha qual workflow chamar |
 | implement-feature.md | `/implement-feature` | PM | Nova funcionalidade end-to-end |
 | ml-experiment.md | `/ml-experiment` | Especialista de Dados | Testar novo modelo ou feature |
 | bug-investigation.md | `/bug-investigation` | QA | Corrigir bug com RCA |
