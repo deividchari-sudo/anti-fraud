@@ -4,212 +4,69 @@ Sistema de detecção de fraude em tempo real para transações bancárias brasi
 
 ## Versão
 
-**Versão Atual**: 1.9.0
-**Data de Lançamento**: 26/04/2026
-**Última Atualização**: 26/04/2026
+**Versão Atual**: 2.0.0
+**Data de Lançamento**: 27/04/2026
+**Última Atualização**: 27/04/2026
 
-### Mudanças na Versão 1.9.0 (Sprint 4 - Federated Learning + RL Adaptive)
+### Mudanças na Versão 2.0.0 (Rule Engine V2)
 
-**Federated Learning**
-- `src/federated_aggregator.py`: FedAvg com Differential Privacy opcional
-- Whitelist de participantes (BACEN compliance)
-- Histórico sem armazenar weights raw (LGPD)
-- Pronto para integração com Flower / TensorFlow Federated
+Evolução completa do interpretador de regras em linguagem natural, mantendo retrocompatibilidade total com V1.
 
-**Reinforcement Learning - Threshold Adaptativo**
-- `src/rl_threshold.py`: Multi-armed bandit (epsilon-greedy)
-- Reward signal de feedback de analistas
-- Epsilon decay configurável + estado persistente em JSON
-- Adapta-se a concept drift sem retreinar
+**Persistência de regras**
+- `RuleRepository` (ABC) + `JSONRuleRepository` (escrita atômica via `os.replace`)
+- `InMemoryRuleRepository` para DI em testes
+- Regras sobrevivem a reinícios da API (`data/rules.json`)
 
-### Mudanças na Versão 1.8.0 (Sprint 3 - AutoEncoder + GraphSAGE)
+**Operadores lógicos OR e NOT**
+- `Rule.condition_groups`: lista de grupos AND, conectados por OR
+- `Condition.negated`: inverte resultado (NOT)
+- Parser detecta `" ou "` como separador e `"exceto"`/`"não sendo"` como NOT
 
-**AutoEncoder para Fraude Zero-Day**
-- `src/autoencoder_anomaly.py`: MLP-based autoencoder (sklearn)
-- Treina apenas em transações legítimas (one-class)
-- Detecta NOVOS padrões de fraude não vistos no treino
-- AnomalyModelRepository (DI) + audit logging BACEN
+**Audit log BACEN**
+- `RuleAuditLogger` em `logs/rule_audit.jsonl` (append-only JSONL)
+- Cada match grava `timestamp`, `rule_id`, `transaction_id`, `action`, `priority`
+- Imutável e timestamped — ingerível por ELK/Splunk/BigQuery
 
-**SimpleGraphSAGE - Graph Embeddings**
-- `src/simple_graph_sage.py`: NumPy puro (sem PyTorch Geometric)
-- Embeddings inductive K-hop com mean aggregation
-- Detecção de money mules e padrões circulares
-- Output: vetor de 24 dimensões pronto para ML pipelines
+**Métricas operacionais por regra**
+- `RuleMetricsRegistry`: `hit_count`, `last_match_at`, `false_positive_count`
+- Identifica regras zumbis e ajuda calibração contra falsos positivos
 
-### Mudanças na Versão 1.7.0 (Sprint 2 - Stacking + Open Finance + Re-treino)
+**Detecção de conflitos**
+- `detect_conflicts()` identifica pares com mesma assinatura e ações opostas
+- Endpoint `GET /rules/conflicts`
 
-**Novo Modelo: StackingFraudModel**
-- `src/stacking_model.py`: 3 base estimators + meta-learner LR + calibração isotônica
-- Level 0: XGBoost + LightGBM + CatBoost (3-fold CV para gerar meta-features)
-- Level 1: Logistic Regression como meta-learner
-- Threshold tuning automático global + canal + produto
-- SHAP via XGBoost da camada base
+**Novos endpoints REST**
+- `POST /rules/validate` — dry-parse sem persistir
+- `POST /rules/simulate` — dry-run em lote contra dataset
+- `GET /rules/conflicts` — pares conflitantes
+- `GET /rules/export` / `POST /rules/import` — portabilidade JSON
+- `GET /rules/metrics` — métricas por regra
+- `PATCH /rules/{rule_id}` — update parcial (priority, enabled, name, description)
 
-**Open Finance Features**
-- `src/open_finance_features.py`: extrator de 9 features simuladas (determinístico)
-- Features: contas em outros bancos, score de crédito, estabilidade de renda, etc.
-- Pronto para substituição pela API real Open Finance mantendo interface
+**Cobertura de testes**
+- +25 testes V2 em `tests/test_rule_engine_v2.py`
+- Suite completa: **293 passed, 5 skipped, 0 errors** (era 268)
+- Zero regressão nos 148 testes legados do rule engine
 
-**Re-treino Agendado (Concept Drift)**
-- `scripts/scheduled_retrain.py`: pipeline de re-treino com detecção de drift
-- Histórico em `logs/retrain_history.json`
-- Workflow `.github/workflows/scheduled-retrain.yml` (cron semanal segundas 03:00 UTC)
-- Detecta drift se AUC cair > 0.05 ou F1 cair > 0.10
+### Histórico de Sprints (1.6 → 1.9)
 
-**Métricas (100k samples)**
-- Stacking AUC-ROC: 0.7832
-- F1-Score @ ótimo (0.2455): 0.2454
-- **Precision @ ótimo: 0.3175** (4× melhor que XGBoost solo: 0.0777)
-- Recall: 0.2000 (operação combinaria com revisão humana)
+O histórico completo das 4 sprints (Ensemble, Stacking, Deep Learning, Federated+RL),
+com métricas e sign-off da squad, está consolidado em
+[`docs/CONCLUSAO_FINAL.md`](docs/CONCLUSAO_FINAL.md).
 
-**Critérios de Aceite QA**
-- ✅ Latência P95: 98ms (BACEN <200ms)
-- ✅ Latência P99: 110ms
-- ✅ 224 testes passando (era 211, +13)
-- ✅ SHAP explainability mantida
+Resumo:
 
-**Dependências**
-- Adicionado `catboost>=1.2.0` ao `requirements.txt`
-
-### Mudanças na Versão 1.6.0 (Sprint 1 - Ensemble + Refactor Arquitetural)
-
-**Novos Modelos**
-- `EnsembleFraudModel` (`src/ensemble_model.py`): XGBoost + LightGBM com voting ponderado
-- Calibração isotônica de probabilidades via `CalibratedClassifierCV`
-- Threshold tuning automático: global + por canal (app/web/api) + por produto (pix/ted/boleto/autenticação)
-- Feature importance média ponderada dos dois base estimators
-
-**Refactor Arquitetural (Apontamentos do Arquiteto)**
-- `BaseFraudModel` (ABC) extraída em `src/base_model.py` — elimina duplicação
-  - Audit logging compartilhado (BACEN)
-  - Train/test split + SMOTE balancing reutilizáveis
-  - Feature alignment para predição
-  - Decision logging padronizado
-- `EnsembleModelRepository` (ABC) e `JoblibEnsembleModelRepository` em `src/repositories.py`
-  - Dependency Injection para persistência (testabilidade + storage flexível)
-  - Permite mocks in-memory para testes rápidos
-- `EnsembleFraudModel` agora herda de `BaseFraudModel` e aceita repositório injetado
-
-**Métricas (100k samples)**
-- Ensemble AUC-ROC: 0.8207 (XGB-only: 0.8141, LGB-only: 0.8113)
-- F1-Score @ threshold ótimo (0.1487): 0.2574
-- Precision @ threshold ótimo: **0.2775** (3.5× melhor que XGBoost solo: 0.0777)
-- Probabilidades calibradas (críticas para decisões de negócio)
-
-**Critérios de Aceite QA**
-- ✅ Latência P95 < 100ms (BACEN): 93ms
-- ✅ Latência P99 < 200ms: 125ms
-- ⚠️ Latência média: 75ms (tradeoff aceitável: 2 modelos + calibração)
-- ✅ 211 testes passando (era 209)
-- ✅ SHAP explainability mantida via XGBoost calibrado
-
-**Dependências**
-- Adicionado `lightgbm>=4.3.0` ao `requirements.txt`
-
-### Mudanças na Versão 1.5.0 (Dataset Expandido para 100k)
-
-**Dataset**
-- Expandido de 60.000 para 100.000 amostras (atinge meta do BACEN)
-- Distribuição: 99.000 legítimas / 1.000 fraudes (1% taxa de fraude)
-- Script `generate_expanded_dataset.py` parametrizável via CLI
-
-**Re-treinamento do Modelo XGBoost**
-- AUC-ROC: 0.8307 → **0.8395** (+1.05%)
-- F1-Score @ threshold 0.5: 0.2412 → 0.1375
-- F1-Score @ threshold ótimo (0.889): **0.2778** (+15.2%)
-- Recall (fraude): **0.5950** (detecta 59% das fraudes)
-- 80k treino / 20k teste com SMOTE balanceado
-
-**Top Features Atualizadas**
-1. faixa_valor_alta (0.0846)
-2. faixa_valor_media (0.0729)
-3. fim_de_semana (0.0576)
-4. canal_api (0.0455)
-5. canal_web (0.0452)
-
-### Mudanças na Versão 1.4.0 (Melhorias Especialista de Dados)
-
-**Melhorias de Clustering**
-- Adicionado DBSCAN como alternativa ao K-means (detecta outliers automaticamente)
-- Implementado silhouette score para validação de clustering
-- Aumentado número de clusters de 5 para 10 para melhor segmentação
-
-**Melhorias no Isolation Forest**
-- Implementado auto-contamination (encontra contamination ótimo automaticamente)
-- Adicionado EnsembleIsolationForest com 5 modelos e voting
-- Melhorado cálculo de feature importance usando árvores subjacentes
-
-**Configurações Atualizadas**
-- UserProfileService usa 10 clusters por padrão
-- Isolation Forest com auto_contamination=True
-- Silhouette score calculado automaticamente para validação
-
-### Mudanças na Versão 1.3.0 (Behavioral Profiling V2)
-
-**Conformidade LGPD e Segurança**
-- Implementado hashing de CPFs com SHA-256 + salt
-- CPFs não armazenados em plaintext
-- Módulo `crypto.py` para proteção de dados sensíveis
-
-**Backend Otimizado**
-- Implementado SQLite para substituir JSON de 94MB
-- Lazy loading para performance
-- Cache em memória para perfis de usuário
-- Latência do behavioral profiling: 1.91ms (meta: < 10ms)
-
-**Features Temporais**
-- Janelas deslizantes (7, 30, 90 dias)
-- Análise de tendência (crescente/decrescente)
-- Features sazonais (dia da semana, hora do dia)
-- Detecção de mudanças de padrão temporal
-
-**Clustering de Usuários**
-- K-means com 5 clusters comportamentais
-- Segmentação automática de usuários
-- Detecção de anomalias relativa ao cluster
-- Descrições interpretáveis dos clusters
-
-**Isolation Forest para Outliers Multivariados**
-- 14 features extraídas de transações
-- Detecção de anomalias complexas multidimensionais
-- Integração com contexto de perfil do usuário
-
-**Aprendizado Online**
-- Perfis adaptativos com médias exponenciais móveis
-- Threshold adaptativo com feedback de analistas
-- Detecção de concept drift (mudanças de padrão)
-- Forgetting factor para ponderar dados antigos
-
-**Features de Grafo**
-- Análise de rede de conexões entre CPFs
-- Features: degree, clustering coefficient, PageRank
-- Detecção de money mules (high-degree nodes)
-- Detecção de transações circulares
-
-**Novos Endpoints**
-- GET /profile/{cpf} - Obter perfil comportamental do usuário
-- POST /feedback/anomaly - Feedback de analista sobre anomalias
-
-### Mudanças na Versão 1.2.0
-
-- Implementado Interpretador de Regras em Linguagem Natural (DSL)
-- Suporte a português brasileiro (PT-BR) para regras operacionais
-- Condições suportadas: CPF, valor, horário, canal, banco
-- Ações: marcar como fraude ou legítimo (whitelist)
-- Integração com API FastAPI (/predict com priorização de regras)
-- Endpoints CRUD para gerenciamento de regras
-- 110 testes abrangentes para rule engine
-- Documentação completa do interpretador de regras
-
-### Mudanças na Versão 1.1.0
-
-- Adicionado Configuration Management (config.py)
-- Implementado Repository Pattern (src/repositories.py)
-- Implementado Dependency Injection
-- Adicionado SHAP Explainer para explicabilidade
-- Implementado Logging Auditável
-- Atualizados testes para suportar explicações
-- Melhorias arquiteturais (DDD, CDD)
+| Versão | Sprint | Entregas principais |
+|---|---|---|
+| 1.9.0 | Sprint 4 | Federated Learning (FedAvg+DP) + RL Threshold Adaptativo |
+| 1.8.0 | Sprint 3 | AutoEncoder zero-day + SimpleGraphSAGE |
+| 1.7.0 | Sprint 2 | Stacking (XGB+LGB+Cat→LR) + Open Finance + Re-treino agendado |
+| 1.6.0 | Sprint 1 | Ensemble (XGB+LGB) + BaseFraudModel ABC + DI |
+| 1.5.0 | Dataset | Expansão para 100k amostras (1% fraude) |
+| 1.4.0 | — | DBSCAN, silhouette, auto-contamination, Ensemble IF |
+| 1.3.0 | — | Behavioral Profiling V2 (LGPD hashing, SQLite, online learning) |
+| 1.2.0 | — | Interpretador de Regras V1 (DSL português) |
+| 1.1.0 | — | Repository Pattern + DI + SHAP + audit log |
 
 ## Arquitetura
 
@@ -329,7 +186,7 @@ Verifica status da API
 {
   "status": "healthy",
   "model_loaded": true,
-  "version": "1.2.0"
+  "version": "2.0.0"
 }
 ```
 
@@ -883,9 +740,10 @@ pytest tests/test_api.py -v
 pytest tests/test_performance.py -v
 pytest tests/test_rule_engine.py -v
 pytest tests/test_rule_engine_comprehensive.py -v
+pytest tests/test_rule_engine_v2.py -v
 ```
 
-**Resultado**: 148 passed (38 rule engine + 110 comprehensive)
+**Resultado atual**: 293 passed, 5 skipped (V2.0.0)
 
 ## Performance
 
@@ -916,11 +774,15 @@ anti-fraud-v3-wf/
 │   ├── rl_threshold.py           # EpsilonGreedyThresholdSelector (RL)
 │   ├── open_finance_features.py  # OpenFinanceFeatureExtractor (9 features)
 │   ├── repositories.py           # Repository Pattern (SQLite + JSON + Ensemble + Anomaly)
-│   ├── rule_engine/              # Interpretador de Regras
+│   ├── rule_engine/              # Interpretador de Regras V2
 │   │   ├── __init__.py
-│   │   ├── parser.py             # Parser de linguagem natural
-│   │   ├── rule.py               # Estruturas de dados
-│   │   └── evaluator.py          # Avaliador de regras
+│   │   ├── parser.py             # Parser de linguagem natural (OR/NOT)
+│   │   ├── rule.py               # Estruturas de dados (negated, condition_groups)
+│   │   ├── evaluator.py          # Avaliador com persistência, métricas, audit
+│   │   ├── repository.py         # JSONRuleRepository / InMemoryRuleRepository
+│   │   ├── audit.py              # RuleAuditLogger (BACEN JSONL)
+│   │   ├── metrics.py            # RuleMetricsRegistry
+│   │   └── conflicts.py          # detect_conflicts()
 │   ├── user_profile/             # Behavioral Profiling
 │   │   ├── __init__.py
 │   │   ├── models.py             # Modelos Pydantic para perfil
@@ -969,18 +831,18 @@ anti-fraud-v3-wf/
 ├── README.md
 ├── AGENTS.md
 └── docs/                         # Documentação
-    ├── DOCUMENTACAO_COMPLETA.md
-    ├── RELATORIO_TECNICO.md
-    └── INTERPRETADOR_REGRAS.md   # Documentação do interpretador
+    ├── COMO_FUNCIONA.md          # Explicação não-técnica para áreas de negócio
+    ├── INTERPRETADOR_REGRAS.md   # Documentação V2 do interpretador de regras
+    ├── CONCLUSAO_FINAL.md        # Histórico das Sprints 1-4
+    └── POSTMAN_COLLECTION.md     # Exemplos de payload por endpoint
 ```
 
 ## Documentação
 
-- [Documentação Completa](docs/DOCUMENTACAO_COMPLETA.md) - Detalhamento completo do sistema
-- [Relatório Técnico](docs/RELATORIO_TECNICO.md) - Aspectos técnicos e arquiteturais
-- [Interpretador de Regras](docs/INTERPRETADOR_REGRAS.md) - Documentação completa do interpretador de regras em linguagem natural
-- [Análise de Dataset e Proposta de Modelo](analise_dataset_proposta_modelo.md)
-- [Validação Final PM](validacao_final_pm.md)
+- [Como Funciona (não-técnica)](docs/COMO_FUNCIONA.md) — explicação acessível para áreas de negócio
+- [Interpretador de Regras V2](docs/INTERPRETADOR_REGRAS.md) — DSL em PT-BR, persistência, OR/NOT, audit, métricas
+- [Conclusão das Sprints 1-4](docs/CONCLUSAO_FINAL.md) — histórico técnico completo da evolução
+- [Postman Collection](docs/POSTMAN_COLLECTION.md) — exemplos de payload para todos os endpoints
 
 ## Próximos Passos
 
