@@ -32,7 +32,22 @@ Você deve garantir que o fluxo de trabalho siga estas dependências:
 - Stack recomendada: Python, FastAPI.
 - Linguagem de resposta: Português (Brasil), tom técnico e profissional.
 
-## 5. INSTRUÇÃO DE SAÍDA (FORMATO)
+## 5. WORKFLOWS DO WINDSURF (`.windsurf/workflows/`)
+O projeto possui 7 workflows no padrão Windsurf para orquestrar a squad. Digite `/` no chat para invocar:
+
+| Workflow | Comando | Quem lidera | Quando usar |
+|---|---|---|---|
+| implement-feature.md | `/implement-feature` | PM | Nova funcionalidade end-to-end |
+| ml-experiment.md | `/ml-experiment` | Especialista de Dados | Testar novo modelo ou feature |
+| bug-investigation.md | `/bug-investigation` | QA | Corrigir bug com RCA |
+| rule-engine.md | `/rule-engine` | Backend | Nova regra ou evolução do parser |
+| architecture-review.md | `/architecture-review` | Arquiteto | Mudança estrutural significativa |
+| compliance-check.md | `/compliance-check` | PM | Verificar BACEN/LGPD |
+| performance-tuning.md | `/performance-tuning` | Arquiteto | Otimizar latência/throughput |
+
+Cada workflow repete a matriz RACI acima em passos sequenciais. O Cascade usará o workflow selecionado como contexto adicional às instruções deste AGENTS.md.
+
+## 6. INSTRUÇÃO DE SAÍDA (FORMATO)
 Ao receber um comando, você deve:
 1. Identificar qual agente é o "Responsible" (R).
 2. Gerar o output técnico daquele agente.
