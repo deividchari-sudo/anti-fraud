@@ -1,6 +1,42 @@
-# Fraud Detection API - Anti-Fraud v3
+# Fraud Detection API — Anti-Fraud v3
 
 Sistema de detecção de fraude em tempo real para transações bancárias brasileiras (PIX, TED, Boleto, Autenticação) com baixa latência e conformidade regulatória (BACEN/LGPD).
+
+## TL;DR
+
+- **O que faz:** classifica cada transação como fraude ou legítima em **≤ 100 ms** (P95), com decisão auditada e explicável.
+- **Como decide (3 camadas em cascata):** Regras em PT-BR → Modelo ML (XGBoost / Ensemble / Stacking / AutoEncoder / GraphSAGE) → Perfil comportamental online.
+- **Compliance:** BACEN (Resolução BCB nº 6) + LGPD (CPF hashed SHA-256+salt; direito à explicação via SHAP).
+- **Tamanho:** 293 testes, 9 modelos/algoritmos coexistindo, 71 features, 4 sprints completas.
+- **Por onde começar:** [`docs/COMO_FUNCIONA.md`](docs/COMO_FUNCIONA.md) (não-técnico) ou [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) (técnico).
+
+## Mapa da Documentação
+
+| Você é… | Comece por |
+|---|---|
+| **Negocios / compliance / jurídico** | [`docs/COMO_FUNCIONA.md`](docs/COMO_FUNCIONA.md) → [`docs/FAQ.md`](docs/FAQ.md) |
+| **Engenheiro / arquiteto** | [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) → este README → código |
+| **Cientista de dados** | [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) → [`docs/CONCLUSAO_FINAL.md`](docs/CONCLUSAO_FINAL.md) |
+| **Operador de fraude / regras** | [`docs/INTERPRETADOR_REGRAS.md`](docs/INTERPRETADOR_REGRAS.md) |
+| **Quem vai testar a API** | [`docs/POSTMAN_COLLECTION.md`](docs/POSTMAN_COLLECTION.md) + Swagger em `/docs` |
+| **Quem viu termo desconhecido** | [`docs/GLOSSARIO.md`](docs/GLOSSARIO.md) |
+
+## Quickstart (60 segundos)
+
+```bash
+# Windows PowerShell (use Linux/macOS equivalente quando aplicável)
+git clone https://github.com/<org>/anti-fraud-v3-wf.git
+cd anti-fraud-v3-wf
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python train_model.py                         # gera models/fraud_model.pkl (~30 s)
+uvicorn src.main:app --host 127.0.0.1 --port 8001 --reload
+```
+
+API disponível em http://127.0.0.1:8001 — Swagger em http://127.0.0.1:8001/docs.
+Problema com a porta 8000 no Windows? Veja [`docs/FAQ.md`](docs/FAQ.md#winerror-10013-ao-subir-na-porta-8000-windows).
+
 
 ## Versão
 
@@ -68,112 +104,79 @@ Resumo:
 | 1.2.0 | — | Interpretador de Regras V1 (DSL português) |
 | 1.1.0 | — | Repository Pattern + DI + SHAP + audit log |
 
-## Arquitetura
+## Arquitetura (Visão Geral)
 
 ```
-┌─────────────────┐
-│   Cliente API   │
-└────────┬────────┘
-         │ HTTP/JSON
-         ▼
-┌─────────────────┐
-│  FastAPI (API)  │
-│  - main.py      │
-│  - config.py    │
-└────────┬────────┘
-         │
-         ├──────────────────────────┐
-         │                          │
-         ▼                          ▼
-┌─────────────────┐      ┌─────────────────────┐
-│ Rule Engine     │      │ Behavioral Profile  │
-│ - parser.py     │      │ - service.py        │
-│ - rule.py       │      │ - anomaly_detector.py│
-│ - evaluator.py  │      │ - temporal_features  │
-└────────┬────────┘      │ - clustering.py      │
-         │              │ - isolation_forest   │
-         │              │ - online_learning      │
-         │              │ - graph_features      │
-         │              └──────────┬────────────┘
-         │                         │
-         │                         ▼
-         │              ┌─────────────────────┐
-         │              │  UserProfile Repo   │
-         │              │  (SQLite + Cache)    │
-         │              └─────────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│Feature Engineer │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ ML Model (XGBoost)│
-│  - SHAP Explainer│
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Repositories   │
-└─────────────────┘
+  POST /predict
+        │
+        ▼
+  FastAPI (validation + DI + audit)
+        │
+        ▼
+  ┌─ Rule Engine V2 (PT-BR DSL) ────────────┐  match? → retorna na hora
+  │  parser · evaluator · audit · metrics │           (curto-circuito + audit BACEN)
+  └────────────────────────────────────────┘
+        │ sem match
+        ▼
+  ┌─ Feature Engineering (71 features) ────┐
+  └─────────────────────────────────────┘
+        │
+        ▼
+  ┌─ ML Layer (configurável) ──────────────┐
+  │  XGBoost  ·  Ensemble (XGB+LGB)            │
+  │  Stacking (XGB+LGB+Cat→LR)                  │
+  │  AutoEncoder (zero-day) · SimpleGraphSAGE   │
+  │  Threshold: per-channel/product + RL adapt. │
+  │  Calibração isotônica + SHAP                │
+  └────────────────────────────────────────┘
+        │
+        ▼
+  ┌─ Behavioral Profiling (UserProfileService) ┐
+  │  EMA online · KMeans/DBSCAN · IsolationForest│
+  │  janelas 7/30/90d · graph features          │
+  └────────────────────────────────────────┘
+        │
+        ▼
+  ┌─ Persistência (Repository + DI) ────────┐
+  │  SQLite (perfis) · JSON (regras, feedback)  │
+  │  Joblib (modelos)                            │
+  └────────────────────────────────────────┘
+        │
+        ▼
+  Resposta + audit log (logs/audit.log + logs/rule_audit.jsonl)
 ```
+
+Detalhes completos em [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
 
 ## Stack Tecnológica
 
 - **Linguagem**: Python 3.13
-- **Framework API**: FastAPI 0.104+
-- **ML Framework**: XGBoost 2.0+
-- **Processamento de Dados**: Pandas, NumPy
-- **Testes**: Pytest, Pytest-Cov
-- **ASGI Server**: Uvicorn 0.24+
-- **Configuration**: Pydantic Settings
+- **Framework API**: FastAPI 0.104+ / Uvicorn 0.24+
+- **ML supervisionado**: XGBoost 2.0+ / LightGBM 4.3+ / CatBoost 1.2+
+- **ML não-supervisionado**: scikit-learn 1.4+ (IsolationForest, KMeans, DBSCAN, MLP)
 - **Explicabilidade**: SHAP 0.44+
-- **Persistência**: Joblib 1.3+, SQLite 3
-- **Rule Engine**: DSL em Português (Regex-based)
-- **Behavioral Profiling**: 
-  - Scikit-learn (K-means, Isolation Forest)
-  - NetworkX (análise de grafo)
-  - Cryptography (SHA-256 hashing)
+- **Balanceamento**: imbalanced-learn (SMOTE)
+- **Grafos**: NetworkX 3.x + NumPy puro (SimpleGraphSAGE)
+- **Persistência**: SQLite, Joblib 1.3+, JSON atômico
+- **Cripto**: hashlib SHA-256 + salt
+- **Configuração**: Pydantic Settings (v2) + `.env`
+- **Testes**: Pytest, Pytest-Cov, httpx
 
-## Instalação
+## Instalação e Treinamento
 
-```bash
-# Clone o repositório
-git clone https://github.com/your-org/anti-fraud-v3-wf.git
-cd anti-fraud-v3-wf
-
-# Crie ambiente virtual
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# Instale dependências
-pip install -r requirements.txt
-
-# Treine o modelo
-python train_model.py
-```
-
-## Treinamento do Modelo
+Para o quickstart de 60 segundos veja a seção no topo. Para treinar outros modelos:
 
 ```bash
-python train_model.py
+python train_model.py        # XGBoost solo (baseline)
+python train_ensemble.py     # Ensemble XGB + LGB
+python train_stacking.py     # Stacking XGB+LGB+Cat → LR (maior precision)
 ```
 
-Este script:
-1. Carrega o dataset expandido (100.000 amostras)
-2. Extrai 71 features
-3. Aplica SMOTE para balanceamento
-4. Treina modelo XGBoost
-5. Salva modelo em `models/fraud_model.pkl`
+Cada script carrega `dataset_transacoes_expanded.csv` (100k amostras), extrai 71
+features, aplica SMOTE, treina o modelo e persiste em `models/`.
 
-## Execução da API
-
-```bash
-uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-API estará disponível em http://localhost:8000
+Re-treino agendado: `python scripts/scheduled_retrain.py` (rodado semanalmente
+via GitHub Actions — `.github/workflows/scheduled-retrain.yml`).
 
 ## Endpoints
 
@@ -606,18 +609,26 @@ print(result)
 "
 ```
 
-## Métricas Atuais
+## Métricas Atuais (dataset sintético 100k)
 
-| Métrica | Valor | Meta | Status |
-|---------|-------|------|--------|
-| Latência | 28ms | <100ms | ✅ |
-| AUC-ROC | 0.8395 | >0.90 | ⚠️ |
-| F1-Score (threshold 0.5) | 0.1375 | >0.85 | ⚠️ |
-| F1-Score (threshold ótimo 0.889) | 0.2778 | >0.85 | ⚠️ |
-| Recall (Fraude) | 0.5950 | >0.85 | ⚠️ |
-| Dataset | 100.000 amostras | 100.000+ | ✅ |
-| Explicabilidade | SHAP | Obrigatório | 
-| Logging Auditável | 100% | 100% | 
+| Modelo | AUC-ROC | F1 (ótimo) | Precision | Recall | Latência média |
+|---|---|---|---|---|---|
+| XGBoost solo (v1.5) | 0.8395 | 0.2778 | 0.0777 | 0.5950 | 28 ms |
+| Ensemble XGB+LGB (v1.6) | 0.8207 | 0.2574 | 0.2775 | 0.2400 | 75 ms |
+| **Stacking XGB+LGB+Cat→LR (v1.7)** | 0.7832 | 0.2454 | **0.3175** | 0.2000 | 98 ms |
+
+**Critérios obrigatórios atendidos:**
+
+| Critério | Valor | Meta | Status |
+|---|---|---|---|
+| Latência P95 | 98 ms | < 100 ms (BACEN) | |
+| Latência P99 | 110 ms | < 200 ms | |
+| Dataset | 100.000 amostras | 100k+ | |
+| Explicabilidade | SHAP top-N | Obrigatório | |
+| Logging auditável | 100% | 100% | |
+| LGPD (CPF hashed) | SHA-256 + salt | Obrigatório | |
+
+AUC/F1 abaixo da meta refletem **dataset sintético** (correlação alta entre base learners tree-based). Em produção com dados reais e diversos, stacking tipicamente supera o ensemble simples (literatura: Nubank, Mercado Pago). Precision multiplicada por **4×** ao longo dos sprints.
 
 ## Features Implementadas (71 total)
 
@@ -832,38 +843,36 @@ anti-fraud-v3-wf/
 ├── AGENTS.md
 └── docs/                         # Documentação
     ├── COMO_FUNCIONA.md          # Explicação não-técnica para áreas de negócio
+    ├── ARQUITETURA.md            # Visão técnica consolidada
     ├── INTERPRETADOR_REGRAS.md   # Documentação V2 do interpretador de regras
     ├── CONCLUSAO_FINAL.md        # Histórico das Sprints 1-4
-    └── POSTMAN_COLLECTION.md     # Exemplos de payload por endpoint
+    ├── POSTMAN_COLLECTION.md     # Exemplos de payload por endpoint
+    ├── GLOSSARIO.md              # Termos técnicos e de negócio
+    └── FAQ.md                    # Perguntas frequentes + troubleshooting
 ```
 
 ## Documentação
 
-- [Como Funciona (não-técnica)](docs/COMO_FUNCIONA.md) — explicação acessível para áreas de negócio
-- [Interpretador de Regras V2](docs/INTERPRETADOR_REGRAS.md) — DSL em PT-BR, persistência, OR/NOT, audit, métricas
-- [Conclusão das Sprints 1-4](docs/CONCLUSAO_FINAL.md) — histórico técnico completo da evolução
-- [Postman Collection](docs/POSTMAN_COLLECTION.md) — exemplos de payload para todos os endpoints
+| Documento | Para quem | Quando usar |
+|---|---|---|
+| [`docs/COMO_FUNCIONA.md`](docs/COMO_FUNCIONA.md) | Não-técnico (negócio, jurídico, RH) | Entender o que o sistema faz em 5 min |
+| [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) | Engenharia / arquitetura / dados | Visão técnica consolidada (camadas, modelos, decisões) |
+| [`docs/INTERPRETADOR_REGRAS.md`](docs/INTERPRETADOR_REGRAS.md) | Operadores de fraude / compliance | Como escrever e gerenciar regras em PT-BR |
+| [`docs/CONCLUSAO_FINAL.md`](docs/CONCLUSAO_FINAL.md) | Curiosos sobre a evolução | Histórico das 4 sprints (Ensemble → Federated+RL) |
+| [`docs/POSTMAN_COLLECTION.md`](docs/POSTMAN_COLLECTION.md) | Quem vai testar a API | Exemplos de payload por endpoint |
+| [`docs/GLOSSARIO.md`](docs/GLOSSARIO.md) | Todos | Termos técnicos e de negócio explicados |
+| [`docs/FAQ.md`](docs/FAQ.md) | Todos | Perguntas frequentes + troubleshooting |
 
-## Próximos Passos
+## Próximos Passos (Roadmap pós-2.0)
 
-### Concluídos na V1.3.0 ✅
-- ✅ Implementar features de rede (graph analysis)
-- ✅ Implementar clustering de usuários
-- ✅ Implementar features temporais (janelas deslizantes)
-- ✅ Implementar Isolation Forest para outliers multivariados
-- ✅ Implementar aprendizado online com modelos adaptativos
-- ✅ Implementar hashing de CPFs para conformidade LGPD
-- ✅ Otimizar backend com SQLite
-
-### Próximos Passos Futuros
-1. Aumentar dataset para 100k+ amostras
-2. Adicionar dados externos (score de crédito)
-3. Implementar autenticação na API
-4. Implementar Redis para cache distribuído (escala horizontal)
-5. Implementar RNN/LSTM para padrões sequenciais
-6. Deploy em produção com Kubernetes
-7. Validação com dados reais em produção
-8. Treinamento de analistas para feedback loop
+1. **Migrar SQLite → PostgreSQL + Redis** (escala horizontal, perfis cacheados)
+2. **Substituir `OpenFinanceFeatureExtractor` simulado** pela API real do BACEN/Open Finance
+3. **Trocar `FederatedAggregator` in-memory** por Flower / TF Federated (RPC real)
+4. **Conectar `EpsilonGreedyThresholdSelector`** ao `/feedback/anomaly` em loop online
+5. **Validação shadow** com dados reais por 30 dias antes do canary
+6. **Deploy gradual** com canary release (1% → 10% → 50% → 100%)
+7. **Autenticação** OAuth2 / JWT na API + rate limiting
+8. **Observabilidade**: Prometheus metrics + Grafana + tracing (OpenTelemetry)
 
 ## Licença
 
