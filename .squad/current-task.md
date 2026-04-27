@@ -15,7 +15,10 @@
 - [x] 4. [Arquiteto] Valida deployability — API não-breaking (/predict/segmented)
 - [x] 5. [Backend] Integra modelo — SegmentedModelRepository + SegmentedPredictionService + endpoint
 - [x] 6. [QA] Valida regressão — 306 passed, 5 skipped, 0 failures
-- [ ] 7. [Documentador] Atualiza docs — README, ARQUITETURA.md, POSTMAN_COLLECTION.md
+- [x] 7. [Documentador] Atualiza docs — README, ARQUITETURA.md, POSTMAN_COLLECTION.md, FAQ.md
+- [x] 8. [Backend] Script de treino segmentado — train_segmented_models.py
+- [x] 9. [Especialista de Dados] Treino dos 3 modelos segmentados pix_app, pix_web, ted_web
+- [x] 10. [QA] Validação end-to-end — especializado carregado, fallback global funcionando, 306 tests pass
 
 ## Decisões e Apontamentos
 ### Passo 1 — Hipótese e Experimento (Especialista de Dados)
