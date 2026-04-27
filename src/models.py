@@ -54,3 +54,21 @@ class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     version: str
+
+
+class SegmentedPredictionRequest(BaseModel):
+    payload: TransactionPayload
+    strategy: str = "auto"  # "auto" | "global" | "specialized"
+
+
+class SegmentedPredictionResponse(BaseModel):
+    transaction_id: str
+    fraud_probability: float
+    is_fraud: bool
+    confidence: str
+    processing_time_ms: float
+    timestamp: str
+    explanation: Optional[Dict[str, Any]] = None
+    segment: str
+    model_used: str
+    threshold_used: float

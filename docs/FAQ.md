@@ -89,6 +89,21 @@ Existem outros modelos prontos para troca via repositório:
 
 Comparativo de métricas e latências em [`ARQUITETURA.md §5`](ARQUITETURA.md#5-métricas-atuais-dataset-sintético-100k).
 
+### Quando usar modelo global vs especializado por segmento?
+
+O sistema agora suporta **modelos especializados por (produto, canal)** via `POST /predict/segmented`.
+
+| Situação | Recomendação |
+|---|---|
+| Operação normal, todos os produtos/canalas | `/predict` (modelo global com threshold por canal/produto) |
+| Segmento crítico com padrão de fraude distinto (ex: PIX/mobile takeover) | Treine modelo especializado para `pix_mobile` e use `/predict/segmented` com `strategy=auto` |
+| A/B test comparando global vs segmentado | `strategy=global` vs `strategy=specialized` no mesmo endpoint |
+| Cold-start de novo produto/canal | Fallback automático para global; treine especializado após 10k+ amostras |
+
+**Como treinar:** após split do dataset por segmento, salve com nome `models/fraud_model_{produto}_{canal}.pkl` + `feature_names_{produto}_{canal}.json`. O `SegmentedModelRepository` faz lazy-load automaticamente.
+
+**Latência:** +5ms cache warm; +80ms no primeiro load do segmento.
+
 ### Por que o AUC do Stacking é menor que o do XGBoost solo?
 
 Em **dataset sintético** (100k samples), os base learners (XGB/LGB/Cat) são todos

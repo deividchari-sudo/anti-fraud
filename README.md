@@ -7,7 +7,7 @@ Sistema de detecção de fraude em tempo real para transações bancárias brasi
 - **O que faz:** classifica cada transação como fraude ou legítima em **≤ 100 ms** (P95), com decisão auditada e explicável.
 - **Como decide (3 camadas em cascata):** Regras em PT-BR → Modelo ML (XGBoost / Ensemble / Stacking / AutoEncoder / GraphSAGE) → Perfil comportamental online.
 - **Compliance:** BACEN (Resolução BCB nº 6) + LGPD (CPF hashed SHA-256+salt; direito à explicação via SHAP).
-- **Tamanho:** 293 testes, 9 modelos/algoritmos coexistindo, 71 features, 4 sprints completas.
+- **Tamanho:** 306 testes, 9 modelos/algoritmos + router segmentado, 71 features, 4 sprints completas.
 - **Por onde começar:** [`docs/COMO_FUNCIONA.md`](docs/COMO_FUNCIONA.md) (não-técnico) ou [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) (técnico).
 
 ## Mapa da Documentação
@@ -126,6 +126,7 @@ Resumo:
   │  XGBoost  ·  Ensemble (XGB+LGB)            │
   │  Stacking (XGB+LGB+Cat→LR)                  │
   │  AutoEncoder (zero-day) · SimpleGraphSAGE   │
+  │  SegmentedModelRouter (lazy-load por produto/canal) │
   │  Threshold: per-channel/product + RL adapt. │
   │  Calibração isotônica + SHAP                │
   └────────────────────────────────────────┘
@@ -264,6 +265,42 @@ Predição de fraude (transação única) com explicação SHAP
 - O campo `explanation` é preenchido quando `is_fraud = true`
 - Se regras derem match, `explanation.type = "rule_based"`
 - Se ML der match, `explanation` contém SHAP values
+
+### POST /predict/segmented
+
+Predição segmentada por produto e canal. Usa modelo especializado se existir (`models/fraud_model_{produto}_{canal}.pkl`), senão faz fallback para o modelo global. Estratégias: `auto` (padrão), `global`, `specialized`.
+
+**Request**:
+```json
+{
+  "payload": {
+    "id": "tx-001",
+    "timestamp": "2024-01-15T10:30:00",
+    "canal": "mobile",
+    "produto": "pix",
+    ...
+  },
+  "strategy": "auto"
+}
+```
+
+**Response**:
+```json
+{
+  "transaction_id": "tx-001",
+  "fraud_probability": 0.92,
+  "is_fraud": true,
+  "confidence": "high",
+  "processing_time_ms": 18.5,
+  "timestamp": "2024-01-15T10:30:00.018Z",
+  "segment": "pix_mobile",
+  "model_used": "specialized",
+  "threshold_used": 0.7,
+  "explanation": { ... }
+}
+```
+
+**Latência:** +5ms cache warm; +80ms cold-load do segmento. P99 < 50ms após warm.
 
 ### POST /predict/batch
 

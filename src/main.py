@@ -9,7 +9,14 @@ from pydantic import BaseModel
 from config import settings
 from src.feature_engineering import FeatureEngineer
 from src.model import FraudDetectionModel
-from src.models import FraudPrediction, HealthResponse, TransactionRequest
+from src.models import (
+    FraudPrediction,
+    HealthResponse,
+    SegmentedPredictionRequest,
+    SegmentedPredictionResponse,
+    TransactionRequest,
+)
+from src.segmented_model import SegmentedModelRepository, SegmentedPredictionService
 from src.repositories import JoblibModelRepository, SQLiteUserProfileRepository
 from src.rule_engine import (
     JSONRuleRepository,
@@ -103,6 +110,16 @@ model_loaded = False
 # Behavioral Profiling Service
 user_profile_repository = SQLiteUserProfileRepository()
 user_profile_service = UserProfileService(user_profile_repository)
+
+# Segmented Prediction Service (lazy-loads specialized models per product/channel)
+segmented_router = SegmentedModelRepository(
+    global_model=model,
+    models_dir="models",
+)
+segmented_service = SegmentedPredictionService(
+    router=segmented_router,
+    feature_engineer=feature_engineer,
+)
 
 # Try to load model on startup
 try:
@@ -326,6 +343,47 @@ async def predict_fraud_batch(requests: list[TransactionRequest]):
         raise HTTPException(
             status_code=500, detail=f"Error during batch prediction: {str(e)}"
         )
+
+
+@app.post(
+    "/predict/segmented",
+    response_model=SegmentedPredictionResponse,
+    tags=["Prediction"],
+)
+async def predict_fraud_segmented(request: SegmentedPredictionRequest):
+    """Prediz fraude usando modelo segmentado por produto e canal.
+
+    ## Estratégias
+    - **auto**: usa modelo especializado se existir, senão global (fallback)
+    - **global**: sempre usa o modelo global
+    - **specialized**: exige modelo especializado; retorna 422 se não existir
+
+    ## Latência
+    - Primeira chamada de segmento: +80ms (cold load)
+    - Chamadas subsequentes: +5ms (cache)
+
+    ## Resposta inclui
+    - `segment`: produto_canal (ex: "pix_mobile")
+    - `model_used`: "specialized" ou "global"
+    - `threshold_used`: threshold aplicado pelo modelo selecionado
+    """
+    if not model_loaded:
+        raise HTTPException(
+            status_code=503, detail="Model not loaded. Please train the model first."
+        )
+
+    try:
+        transaction_dict = request.payload.model_dump()
+        result = segmented_service.predict(
+            transaction_dict,
+            transaction_id=request.payload.id,
+            strategy=request.strategy,
+        )
+        return SegmentedPredictionResponse(**result)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/model/info", tags=["Model"])

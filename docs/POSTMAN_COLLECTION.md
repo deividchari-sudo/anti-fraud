@@ -127,35 +127,28 @@ Content-Type: application/json
     {
       "payload": {
         "id": "tx-001",
-        "timestamp": "2026-04-25T10:00:00",
-        "canal": "app",
+        "timestamp": "2024-01-15T10:30:00",
+        "canal": "mobile",
         "produto": "pix",
+        "jornada": "transferencia",
+        "direcao": "send",
         "sender": {
-          "cpfSender": "12345678901",
-          "banco": 152
+          "banco": 260,
+          "agencia": "0001",
+          "nuConta": 123456,
+          "cpfSender": "12345678901"
         },
         "receiver": {
-          "cpfReceiver": "98765432100",
-          "banco": 888
+          "banco": 1,
+          "agencia": "0002",
+          "nuConta": 654321,
+          "cpfReceiver": "98765432100"
         },
-        "valor": 100.0
-      }
-    },
-    {
-      "payload": {
-        "id": "tx-002",
-        "timestamp": "2026-04-25T11:00:00",
-        "canal": "web",
-        "produto": "ted",
-        "sender": {
-          "cpfSender": "12345678901",
-          "banco": 152
-        },
-        "receiver": {
-          "cpfReceiver": "45678901234",
-          "banco": 1
-        },
-        "valor": 5000.0
+        "valor": 1000.0,
+        "extra_info": {
+          "codigo_barra": "",
+          "motivo_acesso": ""
+        }
       }
     }
   ]
@@ -168,26 +161,107 @@ Content-Type: application/json
   "results": [
     {
       "transaction_id": "tx-001",
-      "fraud_probability": 0.0234,
+      "fraud_probability": 0.0454,
       "is_fraud": false,
-      "confidence": "low"
-    },
-    {
-      "transaction_id": "tx-002",
-      "fraud_probability": 0.8765,
-      "is_fraud": true,
-      "confidence": "high"
+      "confidence": "low",
+      "processing_time_ms": 22.5,
+      "timestamp": "2024-01-15T10:30:00.022Z",
+      "explanation": null,
+      "behavioral_analysis": {
+        "risk_score": 0.1,
+        "profile_status": "normal",
+        "is_anomaly": false,
+        "cold_start": false
+      }
     }
   ],
-  "total_transactions": 2,
+  "total_transactions": 1,
   "processing_time_ms": 45.12,
-  "avg_time_per_transaction": 22.56
+  "avg_time_per_transaction": 45.12
 }
 ```
 
+### 4. Predição Segmentada (por Produto e Canal)
+
+#### POST /predict/segmented
+
+Usa modelo especializado para o segmento `(produto, canal)` se existir em `models/`. Fallback automático para o modelo global. Estratégias: `auto` (padrão), `global`, `specialized`.
+
+**Request**:
+```http
+POST http://localhost:8000/predict/segmented
+Content-Type: application/json
+```
+
+**Body**:
+```json
+{
+  "payload": {
+    "id": "tx-seg-001",
+    "timestamp": "2024-01-15T10:30:00",
+    "canal": "mobile",
+    "produto": "pix",
+    "jornada": "transferencia",
+    "direcao": "send",
+    "sender": {
+      "banco": 260,
+      "agencia": "0001",
+      "nuConta": 123456,
+      "cpfSender": "12345678901"
+    },
+    "receiver": {
+      "banco": 1,
+      "agencia": "0002",
+      "nuConta": 654321,
+      "cpfReceiver": "98765432100"
+    },
+    "valor": 1000.0,
+    "extra_info": {
+      "codigo_barra": "",
+      "motivo_acesso": ""
+    }
+  },
+  "strategy": "auto"
+}
+```
+
+**Response**:
+```json
+{
+  "transaction_id": "tx-seg-001",
+  "fraud_probability": 0.92,
+  "is_fraud": true,
+  "confidence": "high",
+  "processing_time_ms": 18.5,
+  "timestamp": "2024-01-15T10:30:00.018Z",
+  "segment": "pix_mobile",
+  "model_used": "specialized",
+  "threshold_used": 0.7,
+  "explanation": {
+    "base_value": 0.12,
+    "fraud_probability": 0.92,
+    "top_contributing_features": {
+      "valor": 0.35,
+      "transacoes_ultimas_1h": 0.28,
+      "nova_relacao": 0.19
+    },
+    "explanation_summary": "Indicadores de fraude: valor, transacoes_ultimas_1h, nova_relacao."
+  }
+}
+```
+
+**Estratégias disponíveis:**
+- `auto`: usa especializado se existir, senão global (padrão)
+- `global`: sempre modelo global
+- `specialized`: exige modelo especializado; retorna 422 se não existir
+
+**Latência esperada:**
+- Cache warm: +5ms vs `/predict`
+- Cold-load do segmento: +80ms na primeira chamada
+
 ---
 
-### 4. Informações do Modelo
+### 5. Informações do Modelo
 
 #### GET /model/info
 
@@ -214,7 +288,7 @@ GET http://localhost:8000/model/info
 
 ---
 
-### 5. Regras (Rule Engine)
+### 6. Regras (Rule Engine)
 
 #### POST /rules
 
@@ -389,7 +463,7 @@ Content-Type: application/json
 
 ---
 
-### 6. Behavioral Profiling
+### 7. Behavioral Profiling
 
 #### GET /profile/{cpf}
 
@@ -543,7 +617,7 @@ Content-Type: application/json
 
 ---
 
-### 7. Rule Engine V2 — Endpoints novos
+### 8. Rule Engine V2 — Endpoints novos
 
 #### POST /rules/validate
 

@@ -122,6 +122,7 @@ Detalhes completos: [`INTERPRETADOR_REGRAS.md`](INTERPRETADOR_REGRAS.md).
 | **`StackingFraudModel`** | `src/stacking_model.py` | XGB + LGB + CatBoost → meta-learner Logistic Regression. **Maior precision** (0.32). Padrão Nubank. |
 | **`AutoEncoderAnomalyDetector`** | `src/autoencoder_anomaly.py` | MLP autoencoder treinado **só em transações legítimas**. Detecta padrões zero-day (fraudes nunca vistas no treino). |
 | **`SimpleGraphSAGE`** | `src/simple_graph_sage.py` | Embeddings 24-d de transações via mean-aggregation K-hop. Detecta money mules / círculos de lavagem. |
+| **`SegmentedModelRepository`** | `src/segmented_model.py` | Lazy-load de modelos especializados por `(produto, canal)`. Fallback automático para modelo global. Cache em memória. Endpoint `POST /predict/segmented`. |
 
 #### Infraestrutura ML compartilhada
 
@@ -177,6 +178,7 @@ Repository Pattern com Dependency Injection.
 | `EnsembleModelRepository` (ABC) → `JoblibEnsembleModelRepository` | Joblib | Ensemble + Stacking |
 | `AnomalyModelRepository` (ABC) → `JoblibAnomalyModelRepository` | Joblib | AutoEncoder |
 | `UserProfileRepository` (ABC) → `SQLiteUserProfileRepository` | SQLite (`data/user_profiles.db`) | Perfis comportamentais |
+| `SegmentedModelRepository` | Joblib (`models/fraud_model_{prod}_{chan}.pkl`) | Router lazy-load por segmento; fallback global |
 | `RuleRepository` (ABC) → `JSONRuleRepository` / `InMemoryRuleRepository` | JSON / RAM | Regras V2 |
 
 Vantagens: testabilidade (mocks in-memory), troca de backend sem tocar lógica de negócio,
@@ -193,8 +195,9 @@ preparação para PostgreSQL/Redis em produção.
 4. RuleEvaluator.evaluate_single(features):
      ├── match? → retorna {is_fraud, matched_rules, explanation.type=rule_based}
      └── sem match → próxima etapa
-5. Modelo ML: predict_proba (XGBoost / Ensemble / Stacking) (~13 ms)
-6. Threshold: global ou por canal/produto ou via RL
+5. SegmentedModelRouter: decide se usa modelo especializado (produto×canal) ou global (~2 ms lookup)
+6. Modelo ML: predict_proba (XGBoost / Ensemble / Stacking) (~13 ms)
+7. Threshold: global ou por canal/produto ou via RL
 7. SHAP: top-5 features (apenas se is_fraud=True ou debug)
 8. UserProfileService.update(cpf_hash, features) — atualização online (async-friendly)
 9. AuditLogger grava decisão em logs/audit.log
